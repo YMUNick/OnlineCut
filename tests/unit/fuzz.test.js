@@ -2,6 +2,7 @@
 import { test, describe } from 'node:test';
 import assert from 'node:assert/strict';
 import * as P from '../../assets/js/core/project.js';
+import { applyLayout, layoutCandidates, LAYOUTS } from '../../assets/js/core/layouts.js';
 
 /** 可重現的亂數（mulberry32） */
 function rng(seed) {
@@ -46,6 +47,11 @@ export function violations(p) {
     for (const v of [c.start, c.duration, c.srcIn, c.transform.x, c.transform.y, c.transform.scale, c.transform.rotation]) {
       if (!Number.isFinite(v)) out.push(`${tag} 有非數字的值`);
     }
+    if (c.frame !== null) {
+      const f = c.frame;
+      if (!P.canFrame(c)) out.push(`${tag} 不能有畫面框`);
+      else if (!f || ![f.x, f.y, f.w, f.h, f.border].every(Number.isFinite) || !(f.w >= P.MIN_FRAME && f.h >= P.MIN_FRAME) || !P.FRAME_SHAPES.includes(f.shape)) out.push(`${tag} 畫面框不合法 ${JSON.stringify(f)}`);
+    }
     if (c.type !== 'text') {
       const m = p.media[c.mediaId];
       if (!m) out.push(`${tag} 素材不存在`);
@@ -77,7 +83,7 @@ function randomStep(p, r) {
   const pick = (arr) => arr[Math.floor(r() * arr.length)];
   const clip = p.clips.length ? pick(p.clips) : null;
   const t = r() * 30 - 2;
-  const op = Math.floor(r() * 12);
+  const op = Math.floor(r() * 14);
   switch (op) {
     case 0: case 1: {
       const m = pick(Object.values(p.media));
@@ -91,6 +97,11 @@ function randomStep(p, r) {
     case 7: return clip ? P.deleteClips(p, [clip.id], { ripple: r() < 0.5 }) : p;
     case 8: return clip ? P.updateClip(p, clip.id, { speed: pick([0.25, 0.5, 1, 1.3, 2, 4, 9, -1, NaN]), fadeIn: r() * 5, fadeOut: r() * 5 }) : p;
     case 9: return clip ? P.duplicateClip(p, clip.id).project : p;
+    case 11: {
+      const id = pick([...LAYOUTS.map(l => l.id), 'none', 'bogus']);
+      return applyLayout(p, layoutCandidates(p, clip ? [clip.id] : [], t, 4).map(c => c.id), id).project;
+    }
+    case 12: return clip ? P.updateClip(p, clip.id, { frame: pick([null, { x: r() * 3 - 1, w: r() * 3 - 0.5, shape: pick(['circle', 'x', 1]) }, { border: pick([NaN, -5, 1e9, 4]) }, 'junk']) }) : p;
     case 10: return r() < 0.5 ? P.addTrack(p, pick(['video', 'audio'])) : P.removeTrack(p, pick(p.tracks).id);
     default: return P.updateTrack(p, pick(p.tracks).id, { locked: r() < 0.2, hidden: r() < 0.2, muted: r() < 0.2 });
   }
@@ -128,10 +139,10 @@ describe('壞掉 / 惡意的存檔', () => {
     const valid = baseProject();
     for (let i = 0; i < 3000; i++) {
       const raw = JSON.parse(JSON.stringify(valid));
-      raw.clips = P.addClip(P.addClip(valid, 'video', { mediaId: 'v1' }).project, 'text', {}).project.clips;
+      raw.clips = P.addClip(P.addClip(valid, 'video', { mediaId: 'v1', frame: { x: 0.1, y: 0.2, w: 0.3, h: 0.3, shape: 'circle', border: 6, shadow: true } }).project, 'text', {}).project.clips;
       // 隨機把一些欄位換成垃圾
       for (let k = 0; k < 4; k++) {
-        const target = [raw, raw.clips?.[0], raw.clips?.[1], raw.clips?.[0]?.transform, raw.clips?.[1]?.text, raw.tracks?.[0], raw.media?.v1][Math.floor(r() * 7)];
+        const target = [raw, raw.clips?.[0], raw.clips?.[1], raw.clips?.[0]?.transform, raw.clips?.[1]?.text, raw.tracks?.[0], raw.media?.v1, raw.clips?.[0]?.frame][Math.floor(r() * 8)];
         if (target && typeof target !== 'object') continue;
         if (!target) continue;
         const keys = Object.keys(target);

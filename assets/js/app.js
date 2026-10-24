@@ -3,7 +3,11 @@
 import {
   createProject, normalizeProject, addMedia, removeMedia, addClip, deleteClips, splitAtPlayhead,
   duplicateClip, getDuration, setAspect, ASPECT_PRESETS, addTrack, renameProject, DEFAULT_TEXT_DURATION,
+  DEFAULT_IMAGE_DURATION, getClip, getTrack,
 } from './core/project.js';
+import { LAYOUTS, layoutFrames, layoutCandidates, applyLayout } from './core/layouts.js';
+import { getGraphic, renderGraphic } from './graphics.js';
+import { LayoutPanel, GraphicsPanel } from './ui/extras-panel.js';
 import { formatTimecode, clamp } from './core/time.js';
 import { Store } from './state.js';
 import { store as db, storageSettings } from './media/store.js';
@@ -83,6 +87,10 @@ const mediaPanel = new MediaPanel({
   onAddText: (preset) => addText(preset),
 });
 
+const layoutPanel = new LayoutPanel({ store, el: $('layoutPanel'), onApply: (id) => applyLayoutAction(id) });
+const graphicsPanel = new GraphicsPanel({ store, el: $('graphicsPanel'), onAdd: (id) => addGraphic(id) });
+document.querySelector('.tab[data-tab="graphics"]').addEventListener('click', () => graphicsPanel.render());
+
 const inspector = new Inspector({
   store, runtime,
   els: { inspector: $('inspector'), title: $('inspectorTitle') },
@@ -91,6 +99,7 @@ const inspector = new Inspector({
     duplicate: () => duplicateSelected(),
     remove: () => deleteSelected(false),
     storageInfo: () => db.estimate(),
+    showLayouts: () => mediaPanel.showTab('layout'),
   },
 });
 
@@ -98,6 +107,8 @@ const inspector = new Inspector({
 window.__oc = {
   store, player, runtime, timeline,
   importEntries: (e) => importEntries(e),
+  addGraphic: (id) => addGraphic(id),
+  applyLayout: (id) => applyLayoutAction(id),
   /** 模擬關掉再開啟：放掉所有素材，從瀏覽器儲存重新載入 */
   simulateRestart: async () => { player.destroy(); runtime.releaseAll(); pendingHandles.length = 0; await loadSaved(); },
 };
@@ -118,6 +129,8 @@ store.on('change', ({ type }) => {
     timeline.render();
   }
   inspector.update(type === 'replace');
+  layoutPanel.render();
+  graphicsPanel.render();
   if (p.aspect !== lastAspect || type === 'replace') { lastAspect = p.aspect; preview.layout(); }
   preview.drawOverlay();
   if (document.activeElement !== $('projectName')) $('projectName').value = p.name;
@@ -395,6 +408,87 @@ function addText(preset) {
   const { project, clip } = addClip(proj, 'text', {
     trackId: track.id, start: t, text: { ...preset.text, content: preset.sample }, transform: preset.transform, name: preset.label,
   });
+  store.commit(project, { select: [clip.id] });
+}
+
+/** 套用雙畫面版型到選取的片段（不夠時補上播放頭位置的其他畫面） */
+function applyLayoutAction(id) {
+  const p = store.project, t = player.time;
+  const unlocked = (c) => !getTrack(p, c.trackId)?.locked;
+  if (id === 'none') {
+    let clips = store.selection.map(cid => getClip(p, cid)).filter(c => c?.frame && unlocked(c));
+    if (!clips.length) clips = p.clips.filter(c => c.frame && unlocked(c) && t >= c.start && t < c.start + c.duration);
+    if (!clips.length) { toast('播放頭這裡沒有套用版型的畫面'); return; }
+    store.commit(applyLayout(p, clips.map(c => c.id), 'none').project);
+    toast(`已取消 ${clips.length} 個畫面的版型`, { action: { label: '復原', run: () => store.undo() } });
+    return;
+  }
+  const layout = LAYOUTS.find(l => l.id === id);
+  const slots = layoutFrames(id, p.width, p.height)?.length ?? 0;
+  if (!layout || !slots) return;
+  const clips = layoutCandidates(p, store.selection.filter(cid => { const c = getClip(p, cid); return c && unlocked(c); }), t, slots);
+  if (clips.length < 2) {
+    toast('版型需要兩段同時出現的影片或圖片：把第二段放到上面的影像軌、跟第一段時間重疊，再點一次版型。', { timeout: 8000 });
+    return;
+  }
+  const { project, applied } = applyLayout(p, clips.map(c => c.id), id);
+  const top = clips[clips.length - 1];
+  store.commit(project, { select: [top.id] });
+  const extra = slots > applied ? `（這個版型有 ${slots} 格，目前只有 ${applied} 個畫面）` : '';
+  toast(`已套用「${layout.label}」${extra}`, { type: 'success', action: { label: '復原', run: () => store.undo() } });
+}
+
+/** 加入內建圖案：背景放最下面，貼圖和邊框放最上面 */
+async function addGraphic(id) {
+  const g = getGraphic(id);
+  if (!g) return;
+  const t = player.time;
+  let p = store.project;
+  const art = renderGraphic(g, p.width, p.height);
+  // 同一個圖案（同尺寸）已經在專案裡就重複使用
+  let info = Object.values(p.media).find(m => m.type === 'image' && m.name === art.name && m.width === art.width && m.height === art.height && runtime.has(m.id));
+  if (!info) {
+    const file = new File([art.svg], art.name, { type: 'image/svg+xml' });
+    try {
+      const r = await probe(file);
+      await runtime.register(r.info, file, r.url);
+      info = r.info;
+      persistMedia(info.id, file, null);
+    } catch (e) {
+      toast(`無法加入圖案：${e.message}`, { type: 'error' });
+      return;
+    }
+    p = addMedia(store.project, info);
+  }
+  const W = p.width, H = p.height, short = Math.min(W, H);
+  // 背景與邊框蓋住播放頭之後的整段影片（至少預設長度）
+  const rest = getDuration(p) - t;
+  const longDur = rest > 0.5 ? rest : DEFAULT_IMAGE_DURATION;
+  const busyOn = (track, dur) => p.clips.some(c => c.trackId === track.id && t < c.start + c.duration && t + dur > c.start);
+  let track, fields;
+  if (g.category === 'bg') {
+    track = [...p.tracks].reverse().find(tr => tr.kind === 'video' && !tr.locked);
+    if (!track || busyOn(track, longDur)) {
+      p = addTrack(p, 'video', { position: 'bottom' });
+      track = [...p.tracks].reverse().find(tr => tr.kind === 'video');
+    }
+    fields = { duration: longDur };
+  } else {
+    track = p.tracks.find(tr => tr.kind === 'video' && !tr.locked);
+    // 貼圖預設 5 秒，但不超過播放頭之後的影片長度
+    const dur = g.category === 'frame' ? longDur : rest > 0.5 ? Math.min(DEFAULT_IMAGE_DURATION, rest) : DEFAULT_IMAGE_DURATION;
+    if (!track || busyOn(track, dur)) {
+      p = addTrack(p, 'video');
+      track = p.tracks[0];
+    }
+    if (g.category === 'frame') fields = { duration: dur };
+    else {
+      // 貼圖放在右上角，大約短邊的三分之一
+      const scale = 0.32, size = short * scale, m = short * 0.07;
+      fields = { duration: dur, transform: { scale, x: Math.round(W / 2 - m - size / 2), y: Math.round(-(H / 2 - m - size / 2)) } };
+    }
+  }
+  const { project, clip } = addClip(p, 'image', { mediaId: info.id, trackId: track.id, start: t, name: g.label, ...fields });
   store.commit(project, { select: [clip.id] });
 }
 

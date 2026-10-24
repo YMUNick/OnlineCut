@@ -50,6 +50,8 @@
       <div class="tabs" role="tablist">
         <button class="tab active" role="tab" aria-selected="true" data-tab="media"><span data-icon="film"></span>素材</button>
         <button class="tab" role="tab" aria-selected="false" data-tab="text"><span data-icon="type"></span>文字</button>
+        <button class="tab" role="tab" aria-selected="false" data-tab="graphics"><span data-icon="shapes"></span>圖案</button>
+        <button class="tab" role="tab" aria-selected="false" data-tab="layout"><span data-icon="layout"></span>版型</button>
       </div>
       <section class="tab-panel" data-panel="media">
         <div class="dropzone" id="dropzone" tabindex="0" role="button" aria-label="匯入素材">
@@ -69,6 +71,8 @@
         <p class="panel-note">點一下加到播放頭的位置，之後可以在右側調整內容與樣式。</p>
         <div class="text-presets" id="textPresets"></div>
       </section>
+      <section class="tab-panel" data-panel="graphics" id="graphicsPanel" hidden></section>
+      <section class="tab-panel" data-panel="layout" id="layoutPanel" hidden></section>
       <div class="panel-footer">
         <span data-icon="shield" class="icon-sm"></span>
         <span>檔案只存在這台裝置，不會上傳</span>

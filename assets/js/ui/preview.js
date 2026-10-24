@@ -1,6 +1,6 @@
 // 預覽區：依畫面比例調整大小、在畫面上直接選取 / 移動 / 縮放 / 旋轉圖層
 
-import { getClip, updateClip, getTrack } from '../core/project.js';
+import { getClip, updateClip, getTrack, MIN_FRAME } from '../core/project.js';
 import { hitTest } from '../engine/renderer.js';
 import { clamp } from '../core/time.js';
 
@@ -16,6 +16,7 @@ export class Preview {
     this.guides = { v: false, h: false };
     new ResizeObserver(() => this.layout()).observe(els.viewport);
     els.overlay.addEventListener('pointerdown', (e) => this.onPointerDown(e));
+    els.overlay.addEventListener('wheel', (e) => this.onWheel(e), { passive: false });
   }
 
   /** 讓畫面在可用空間內保持比例、置中 */
@@ -67,8 +68,16 @@ export class Preview {
     const box = document.createElement('div');
     box.className = 'sel-box';
     box.style.cssText = `left:${(L.cx - L.w / 2) * s}px;top:${(L.cy - L.h / 2) * s}px;width:${L.w * s}px;height:${L.h * s}px;transform:rotate(${L.rotation}deg)`;
+    if (L.framed) {
+      box.classList.add('framed');
+      if (clip.frame?.shape === 'circle') box.classList.add('circle');
+      box.title = '拖曳移動畫面框，拉角落調整大小；按住 Alt 拖曳或用滾輪調整取景';
+    }
     const locked = getTrack(this.store.project, clip.trackId)?.locked;
-    if (!locked) box.innerHTML = ['nw', 'ne', 'sw', 'se'].map(h => `<span class="sel-handle ${h}" data-h="${h}"></span>`).join('') + '<span class="sel-rotate" data-h="rot" title="旋轉（按住 Shift 以 15° 為單位）"></span>';
+    if (!locked) {
+      box.innerHTML = ['nw', 'ne', 'sw', 'se'].map(h => `<span class="sel-handle ${h}" data-h="${h}"></span>`).join('');
+      if (!L.framed) box.insertAdjacentHTML('beforeend', '<span class="sel-rotate" data-h="rot" title="旋轉（按住 Shift 以 15° 為單位）"></span>');
+    }
     ov.appendChild(box);
   }
 
@@ -100,6 +109,7 @@ export class Preview {
     this.player.pause();
     const L = this.layouts.get(clip.id);
     if (!L) return;
+    if (L.framed && clip.frame) return this.dragFrame(e, clip, handle, pt);
     const base = this.store.project;
     const orig = { ...clip.transform };
     const session = Math.random().toString(36).slice(2);
@@ -138,5 +148,79 @@ export class Preview {
     };
     window.addEventListener('pointermove', move);
     window.addEventListener('pointerup', up);
+  }
+
+  /**
+   * 畫面框：拖曳移動（靠近畫面邊緣與中線會吸附）、拉角落改大小（Shift 或圓形保持比例），
+   * 按住 Alt 拖曳是平移框裡的取景。
+   */
+  dragFrame(e, clip, handle, pt) {
+    const base = this.store.project;
+    const W = base.width, H = base.height;
+    const f0 = { ...clip.frame };
+    const t0 = { ...clip.transform };
+    const session = Math.random().toString(36).slice(2);
+    const mode = handle ? 'resize' : e.altKey ? 'pan' : 'move';
+    const th = CENTER_SNAP_PX / this.scale;
+    // 吸附：位置（像素）靠近目標時對齊
+    const snap = (start, size, total, guide) => {
+      for (const [edge, offset] of [[0, 0], [total, size], [total / 2, size / 2]]) {
+        if (Math.abs(start + offset - edge) < th) {
+          if (edge === total / 2) this.guides[guide] = true;
+          return edge - offset;
+        }
+      }
+      return start;
+    };
+    const move = (ev) => {
+      const q = this.toProject(ev);
+      const dx = q.x - pt.x, dy = q.y - pt.y;
+      this.guides = { v: false, h: false };
+      let patch;
+      if (mode === 'pan') {
+        patch = { transform: { x: Math.round(t0.x + dx), y: Math.round(t0.y + dy) } };
+      } else if (mode === 'move') {
+        let x = f0.x * W + dx, y = f0.y * H + dy;
+        if (!ev.shiftKey) { x = snap(x, f0.w * W, W, 'v'); y = snap(y, f0.h * H, H, 'h'); }
+        patch = { frame: { x: x / W, y: y / H } };
+      } else {
+        // 對角固定，拖曳的角跟著滑鼠
+        const left = f0.x * W, top = f0.y * H, right = left + f0.w * W, bottom = top + f0.h * H;
+        const ax = handle.includes('w') ? right : left, ay = handle.includes('n') ? bottom : top;
+        let w = Math.abs(q.x - ax), h = Math.abs(q.y - ay);
+        if (ev.shiftKey || f0.shape === 'circle') {
+          const k = Math.max(w / (f0.w * W), h / (f0.h * H));
+          w = f0.w * W * k; h = f0.h * H * k;
+        }
+        w = Math.max(w, MIN_FRAME * W); h = Math.max(h, MIN_FRAME * H);
+        const x = handle.includes('w') ? ax - w : ax, y = handle.includes('n') ? ay - h : ay;
+        patch = { frame: { x: x / W, y: y / H, w: w / W, h: h / H } };
+      }
+      this.store.commit(updateClip(base, clip.id, patch), { key: `fr-${session}` });
+    };
+    const up = () => {
+      window.removeEventListener('pointermove', move);
+      window.removeEventListener('pointerup', up);
+      this.guides = { v: false, h: false };
+      this.drawOverlay();
+    };
+    window.addEventListener('pointermove', move);
+    window.addEventListener('pointerup', up);
+  }
+
+  /** 滾輪：調整畫面框裡的取景縮放 */
+  onWheel(e) {
+    const clip = this.store.selectedClip;
+    const L = clip && this.layouts.get(clip.id);
+    const q = this.toProject(e);
+    if (!clip?.frame || !L || !hitTest(L, q.x, q.y)) return;
+    if (getTrack(this.store.project, clip.trackId)?.locked) return;
+    e.preventDefault();
+    const scale = clamp(clip.transform.scale * Math.exp(-e.deltaY * 0.0015), 0.2, 10);
+    // 停下來一陣子再滾就算新的一步（可以分開復原）
+    clearTimeout(this.wheelTimer);
+    this.wheelTimer = setTimeout(() => { this.wheelSession = null; }, 600);
+    this.wheelSession ??= Math.random().toString(36).slice(2);
+    this.store.commit(updateClip(this.store.project, clip.id, { transform: { scale } }), { key: `wheel-${this.wheelSession}` });
   }
 }

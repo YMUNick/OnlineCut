@@ -29,7 +29,7 @@ export function uid(prefix = 'id') {
 const clone = (o) => (typeof structuredClone === 'function' ? structuredClone(o) : JSON.parse(JSON.stringify(o)));
 
 /** 複製 project 後交給 fn 修改，回傳新的 project */
-function produce(project, fn) {
+export function produce(project, fn) {
   const next = clone(project);
   fn(next);
   return next;
@@ -79,6 +79,36 @@ export function defaultText() {
   };
 }
 
+// ============================================================
+// 畫面框（子母畫面、分割畫面）
+// ============================================================
+// frame 以畫面的比例表示位置與大小（0–1），影像會裁切填滿框；
+// 這時 transform.scale 是取景的縮放、transform.x / y 是取景的平移（專案像素）。
+export const FRAME_SHAPES = ['rect', 'round', 'circle'];
+export const MIN_FRAME = 0.02;
+export const canFrame = (c) => c?.type === 'video' || c?.type === 'image';
+
+export function defaultFrame() {
+  return { x: 0, y: 0, w: 1, h: 1, shape: 'rect', border: 0, borderColor: '#ffffff', shadow: false };
+}
+
+/** 檢查畫面框的每個欄位；不是物件就回傳 null（沒有畫面框） */
+export function cleanFrame(f) {
+  if (!f || typeof f !== 'object' || Array.isArray(f)) return null;
+  const d = defaultFrame();
+  const n = (v, def) => (typeof v === 'number' && isFinite(v) ? v : def);
+  return {
+    x: clamp(n(f.x, d.x), -1, 2),
+    y: clamp(n(f.y, d.y), -1, 2),
+    w: clamp(n(f.w, d.w), MIN_FRAME, 2),
+    h: clamp(n(f.h, d.h), MIN_FRAME, 2),
+    shape: FRAME_SHAPES.includes(f.shape) ? f.shape : d.shape,
+    border: clamp(n(f.border, d.border), 0, 60),
+    borderColor: typeof f.borderColor === 'string' && /^#[0-9a-f]{6}$/i.test(f.borderColor) ? f.borderColor : d.borderColor,
+    shadow: f.shadow === true,
+  };
+}
+
 export function makeClip(type, fields = {}) {
   const clip = {
     id: uid('clp'),
@@ -97,10 +127,12 @@ export function makeClip(type, fields = {}) {
     opacity: 1,
     transform: { x: 0, y: 0, scale: 1, rotation: 0 },
     filters: { brightness: 100, contrast: 100, saturation: 100, blur: 0, grayscale: 0 },
+    frame: null,
   };
   if (type === 'text') clip.text = defaultText();
-  const { transform, filters, text, ...rest } = fields;
+  const { transform, filters, text, frame, ...rest } = fields;
   Object.assign(clip, rest);
+  if (frame && canFrame(clip)) clip.frame = cleanFrame(frame);
   if (transform) Object.assign(clip.transform, transform);
   if (filters) Object.assign(clip.filters, filters);
   if (text) Object.assign(clip.text, text);
@@ -417,11 +449,14 @@ export function updateClip(project, id, patch) {
   if (!getClip(project, id)) return project;
   return produce(project, p => {
     const c = getClip(p, id);
-    const { transform, filters, text, speed, ...rest } = patch;
+    const { transform, filters, text, speed, frame, ...rest } = patch;
     for (const [k, v] of Object.entries(rest)) {
       if (['id', 'type', 'mediaId', 'trackId', 'start', 'duration', 'srcIn'].includes(k)) continue;
       c[k] = v;
     }
+    // frame: null 取消畫面框；物件則跟目前的框合併
+    if (frame === null) c.frame = null;
+    else if (frame && canFrame(c)) c.frame = cleanFrame({ ...(c.frame ?? defaultFrame()), ...frame });
     if (transform) Object.assign(c.transform, transform);
     if (filters) Object.assign(c.filters, filters);
     if (text && c.text) Object.assign(c.text, text);
@@ -456,10 +491,13 @@ export function updateClip(project, id, patch) {
 // ============================================================
 // 軌道
 // ============================================================
-export function addTrack(project, kind) {
+/** 新增軌道。影像軌預設加在最上面；position: 'bottom' 加在影像軌的最下面（例如放背景） */
+export function addTrack(project, kind, { position = 'top' } = {}) {
   return produce(project, p => {
     const t = makeTrack(kind, nextTrackName(p, kind));
-    if (kind === 'video') p.tracks.unshift(t); else p.tracks.push(t);
+    if (kind !== 'video') p.tracks.push(t);
+    else if (position === 'bottom') p.tracks.splice(p.tracks.map(x => x.kind).lastIndexOf('video') + 1, 0, t);
+    else p.tracks.unshift(t);
   });
 }
 
@@ -548,6 +586,7 @@ function sanitizeClip(c) {
     scale: clamp(num(t.scale, 1), 0.01, 10),
     rotation: clamp(num(t.rotation, 0), -360, 360),
   };
+  m.frame = canFrame(m) ? cleanFrame(c.frame) : null;
   const f = c.filters && typeof c.filters === 'object' ? c.filters : {};
   m.filters = {
     brightness: clamp(num(f.brightness, 100), 0, 200),

@@ -61,12 +61,16 @@ async function makeFixtures(dir) {
     bad: path.join(dir, 'notes.txt'),
     fake: path.join(dir, 'broken.mp4'),
     rotated: path.join(dir, 'phone.mp4'),
+    red: path.join(dir, 'red.mp4'),
+    blue: path.join(dir, 'blue.mp4'),
   };
   ffmpeg(['-f', 'lavfi', '-i', 'testsrc2=size=640x360:rate=30:duration=4', '-f', 'lavfi', '-i', 'sine=frequency=440:duration=4', '-c:v', 'libx264', '-pix_fmt', 'yuv420p', '-c:a', 'aac', '-shortest', f.video]);
   ffmpeg(['-f', 'lavfi', '-i', 'testsrc2=size=360x640:rate=30:duration=3', '-f', 'lavfi', '-i', 'sine=frequency=660:duration=3', '-c:v', 'libx264', '-pix_fmt', 'yuv420p', '-c:a', 'aac', '-shortest', f.portrait]);
   ffmpeg(['-f', 'lavfi', '-i', 'testsrc2=size=320x240:rate=24:duration=2', '-c:v', 'libvpx', '-b:v', '300k', f.silent]);
   ffmpeg(['-f', 'lavfi', '-i', 'sine=frequency=330:duration=5', '-c:a', 'libmp3lame', '-b:a', '96k', f.audio]);
   ffmpeg(['-f', 'lavfi', '-i', 'color=c=orange:size=800x600:duration=1', '-frames:v', '1', f.image]);
+  // 雙畫面版型用：純紅、純藍兩支短片
+  for (const c of ['red', 'blue']) ffmpeg(['-f', 'lavfi', '-i', `color=c=${c}:size=640x360:rate=30:duration=2`, '-c:v', 'libx264', '-pix_fmt', 'yuv420p', f[c]]);
   // 模擬手機直拍：實際存的是橫的畫面（左紅右藍），加上旋轉 90° 的標記
   const plain = path.join(dir, 'plain.mp4');
   ffmpeg(['-f', 'lavfi', '-i', 'color=red:s=320x360:d=2[a];color=blue:s=320x360:d=2[b];[a][b]hstack', '-c:v', 'libx264', '-pix_fmt', 'yuv420p', plain]);
@@ -198,7 +202,8 @@ try {
       for (let i = 0; i < d.length; i += 400) sum += d[i] + d[i + 1] + d[i + 2];
       return sum;
     });
-    assert.ok(lit > 1000, '預覽畫面有東西');
+    const dbg = await page.evaluate(() => { const c = document.getElementById('previewCanvas'); const p = window.__oc.player; return JSON.stringify({ w: c.width, h: c.height, t: p.time, lay: [...(p.layouts?.values?.() ?? [])], els: [...document.querySelectorAll('video')].map(v => v.readyState), frame: document.getElementById('frame').style.cssText }); });
+    assert.ok(lit > 1000, '預覽畫面有東西 ' + dbg);
   });
 
   await test('播完會停在結尾', async () => {
@@ -1069,7 +1074,214 @@ try {
     }
   });
 
+
   await setLimits({ copy: 100 * 1024 * 1024 });
+  console.log('\n雙畫面版型與圖案');
+  /** 紅色影片在 V1、藍色影片在上面一條軌，兩段從 0 開始重疊 */
+  async function setupTwoCams() {
+    await newProjectUI();
+    await page.setInputFiles('#fileInput', [fx.red, fx.blue]);
+    await waitFor(async () => (await state()).project.clips.length === 2, 10000, '匯入兩支');
+    const ids = await page.evaluate(async () => {
+      const P = await import('./assets/js/core/project.js');
+      const { store, player } = window.__oc;
+      const name = (c) => store.project.media[c.mediaId].name;
+      const red = store.project.clips.find(c => name(c) === 'red.mp4');
+      const blue = store.project.clips.find(c => name(c) === 'blue.mp4');
+      let p = P.moveClip(store.project, red.id, { start: 0 });
+      const top = p.tracks.find(t => t.kind === 'video' && t.id !== red.trackId);
+      p = P.moveClip(p, blue.id, { start: 0, trackId: top.id });
+      store.commit(p, { select: [] });
+      player.seek(0.5);
+      return { red: red.id, blue: blue.id };
+    });
+    await page.click('.tab[data-tab="layout"]');
+    return ids;
+  }
+  const clipOf = async (id) => (await state()).project.clips.find(c => c.id === id);
+  /** 預覽畫面上 (fx, fy) 位置的主要顏色 */
+  const previewColor = (fx, fy) => page.evaluate(([fx, fy]) => {
+    const c = document.getElementById('previewCanvas');
+    const d = c.getContext('2d').getImageData(Math.floor(c.width * fx), Math.floor(c.height * fy), 1, 1).data;
+    return d[0] > d[2] + 80 ? 'red' : d[2] > d[0] + 80 ? 'blue' : `rgb(${d[0]},${d[1]},${d[2]})`;
+  }, [fx, fy]);
+  /** 匯出 360p，回傳一個函式：查 (fx, fy) 的主要顏色 */
+  async function exportedColors(name, t = 0.5) {
+    const bytes = await page.evaluate(async () => {
+      const { exportVideo } = await import('./assets/js/engine/exporter.js');
+      const r = await exportVideo({ project: window.__oc.store.project, runtime: window.__oc.runtime, settings: { short: 360 } });
+      return Array.from(new Uint8Array(await r.blob.arrayBuffer()));
+    });
+    const out = path.join(tmp, `${name}.mp4`);
+    await import('node:fs').then(fs => fs.writeFileSync(out, Buffer.from(bytes)));
+    const v = probe(out).streams.find(s => s.codec_type === 'video');
+    const raw = execFileSync('ffmpeg', ['-v', 'error', '-ss', String(t), '-i', out, '-frames:v', '1', '-f', 'rawvideo', '-pix_fmt', 'rgb24', '-']);
+    return (fx, fy) => {
+      const i = (Math.floor(v.height * fy) * v.width + Math.floor(v.width * fx)) * 3;
+      const [r, g, b] = [raw[i], raw[i + 1], raw[i + 2]];
+      return r > b + 80 ? 'red' : b > r + 80 ? 'blue' : `rgb(${r},${g},${b})`;
+    };
+  }
+
+  await test('左右分割：下面的軌是左邊的主畫面，預覽與匯出一致', async () => {
+    const ids = await setupTwoCams();
+    await page.click('[data-layout="split-h"]');
+    await waitFor(async () => !!(await clipOf(ids.blue)).frame, 3000, '套用');
+    const red = await clipOf(ids.red), blue = await clipOf(ids.blue);
+    assert.equal(red.frame.x, 0);
+    assert.ok(blue.frame.x > 0.5 && blue.frame.x < 0.51, `右邊那格 x=${blue.frame.x}`);
+    assert.deepEqual((await state()).selection, [ids.blue], '選取上面那段，方便馬上調整');
+    await page.waitForTimeout(300);
+    assert.deepEqual([await previewColor(0.25, 0.5), await previewColor(0.75, 0.5)], ['red', 'blue']);
+    const at = await exportedColors('split');
+    assert.deepEqual([at(0.25, 0.5), at(0.75, 0.5), at(0.05, 0.05), at(0.95, 0.95)], ['red', 'blue', 'red', 'blue']);
+    assert.equal(await page.isVisible('.layout-opt.on[data-layout="split-h"]'), true, '標示目前的版型');
+  });
+
+  await test('圓形小窗：圓裡是子畫面，圓外的角落還是主畫面', async () => {
+    const ids = { blue: (await state()).selection[0] };
+    await page.click('[data-layout="circle-br"]');
+    await waitFor(async () => (await clipOf(ids.blue)).frame?.shape === 'circle', 3000, '圓形');
+    const f = (await clipOf(ids.blue)).frame;
+    const cx = f.x + f.w / 2, cy = f.y + f.h / 2;
+    const at = await exportedColors('circle');
+    assert.equal(at(cx, cy), 'blue', '圓心');
+    assert.equal(at(f.x + f.w * 0.04, f.y + f.h * 0.04), 'red', '外接方框的角落在圓外');
+    assert.equal(at(0.3, 0.3), 'red', '主畫面全螢幕');
+  });
+
+  await test('子母畫面：在屬性面板改形狀、邊框，取消版型', async () => {
+    const id = (await state()).selection[0];
+    await page.click('[data-layout="pip-tl"]');
+    await waitFor(async () => (await clipOf(id)).frame?.shape === 'round', 3000, '子母畫面');
+    const f0 = (await clipOf(id)).frame;
+    assert.ok(f0.x < 0.1 && f0.y < 0.1, '左上角');
+    // 改成圓形會變成正圓（以短邊為直徑），中心不動
+    await page.click('.insp-section .seg-btn[data-v="circle"]');
+    await waitFor(async () => (await clipOf(id)).frame.shape === 'circle', 3000, '圓形');
+    const p = (await state()).project, f1 = (await clipOf(id)).frame;
+    assert.ok(Math.abs(f1.w * p.width - f1.h * p.height) < 1e-6, '正圓');
+    assert.ok(Math.abs((f1.x + f1.w / 2) - (f0.x + f0.w / 2)) < 1e-9, '中心不動');
+    // 邊框數值
+    const border = page.locator('.field', { hasText: '邊框' }).first().locator('.num');
+    await border.fill('20');
+    await border.press('Enter');
+    await waitFor(async () => (await clipOf(id)).frame.border === 20, 3000, '邊框 20');
+    await page.click('[data-unframe]');
+    await waitFor(async () => (await clipOf(id)).frame === null, 3000, '取消');
+    assert.equal(await page.isVisible('.insp-section h3:has-text("位置與大小")'), true, '回到一般的位置與大小');
+    await page.keyboard.press('Control+z');
+    await waitFor(async () => (await clipOf(id)).frame?.border === 20, 3000, '復原');
+  });
+
+  await test('預覽上拖曳移動畫面框、Alt 拖曳取景、滾輪縮放', async () => {
+    const id = (await state()).selection[0];
+    await page.click('[data-layout="pip-br"]');
+    await waitFor(async () => (await clipOf(id)).frame?.shape === 'round', 3000, '子母畫面');
+    await page.waitForTimeout(300);
+    const box = await page.locator('#overlay .sel-box').boundingBox();
+    const p = (await state()).project, f0 = (await clipOf(id)).frame;
+    const s = box.width / (f0.w * p.width); // 螢幕像素 / 專案像素
+    const cx = box.x + box.width / 2, cy = box.y + box.height / 2;
+    // 往左上拖 200 專案像素（按 Shift 關掉吸附）
+    await page.keyboard.down('Shift');
+    await page.mouse.move(cx, cy);
+    await page.mouse.down();
+    await page.mouse.move(cx - 100 * s, cy - 100 * s, { steps: 4 });
+    await page.mouse.move(cx - 200 * s, cy - 200 * s, { steps: 4 });
+    await page.mouse.up();
+    await page.keyboard.up('Shift');
+    const f1 = (await clipOf(id)).frame;
+    assert.ok(Math.abs((f0.x - f1.x) * p.width - 200) < 3, `水平移動 ${(f0.x - f1.x) * p.width}`);
+    assert.ok(Math.abs((f0.y - f1.y) * p.height - 200) < 3, `垂直移動 ${(f0.y - f1.y) * p.height}`);
+    assert.equal(f1.w, f0.w, '大小不變');
+    // Alt 拖曳：框不動，取景移動
+    const b2 = await page.locator('#overlay .sel-box').boundingBox();
+    const c2 = [b2.x + b2.width / 2, b2.y + b2.height / 2];
+    await page.keyboard.down('Alt');
+    await page.mouse.move(...c2);
+    await page.mouse.down();
+    await page.mouse.move(c2[0] + 50 * s, c2[1], { steps: 4 });
+    await page.mouse.up();
+    await page.keyboard.up('Alt');
+    const c = await clipOf(id);
+    assert.deepEqual(c.frame, f1, 'Alt 拖曳不會移動畫面框');
+    assert.ok(Math.abs(c.transform.x - 50) < 3, `取景平移 ${c.transform.x}`);
+    // 滾輪：放大取景
+    await page.mouse.move(...c2);
+    await page.mouse.wheel(0, -300);
+    await waitFor(async () => (await clipOf(id)).transform.scale > 1.2, 3000, '滾輪放大');
+    // 拉右下角放大畫面框（左上角固定）
+    const b3 = await page.locator('#overlay .sel-box').boundingBox();
+    await page.mouse.move(b3.x + b3.width, b3.y + b3.height);
+    await page.mouse.down();
+    await page.mouse.move(b3.x + b3.width + 60, b3.y + b3.height + 20, { steps: 4 });
+    await page.mouse.up();
+    const f3 = (await clipOf(id)).frame;
+    assert.ok(Math.abs(f3.x - f1.x) < 1e-9 && Math.abs(f3.y - f1.y) < 1e-9, '左上角固定');
+    assert.ok(f3.w > f1.w && f3.h > f1.h, '變大');
+  });
+
+  await test('版型存檔、重新開啟後還在', async () => {
+    const before = (await state()).project;
+    await saveAndRestart();
+    assertSameProject((await state()).project, before);
+  });
+
+  await test('只有一段畫面時套用版型：提示怎麼做，不會改動', async () => {
+    await newProjectUI();
+    await page.setInputFiles('#fileInput', [fx.red]);
+    await waitFor(async () => (await state()).project.clips.length === 1, 10000, '匯入');
+    const before = (await state()).project;
+    await page.click('.tab[data-tab="layout"]');
+    await page.click('[data-layout="split-v"]');
+    await waitFor(async () => (await page.locator('.toast', { hasText: '兩段同時出現' }).count()) > 0, 3000, '提示');
+    assertSameProject((await state()).project, before);
+  });
+
+  await test('圖案：背景放最下面、貼圖放最上面，重複加入同一個圖案不會多一份素材', async () => {
+    const tracksBefore = (await state()).project.tracks.filter(t => t.kind === 'video').length;
+    await page.evaluate(() => window.__oc.player.seek(0));
+    await page.click('.tab[data-tab="graphics"]');
+    assert.equal(await page.locator('.graphic-opt').count(), 26);
+    await page.click('[data-graphic="sunset"]');
+    await waitFor(async () => (await state()).project.clips.length === 2, 5000, '背景');
+    let s = await state();
+    const bg = s.project.clips.find(c => c.name === '夕陽漸層');
+    const videoTracks = s.project.tracks.filter(t => t.kind === 'video');
+    assert.equal(videoTracks.length, tracksBefore + 1, '主軌在這段時間有影片，所以在最下面新增一條');
+    assert.equal(bg.trackId, videoTracks[videoTracks.length - 1].id, '在最下面');
+    assert.equal(s.project.media[bg.mediaId].mime, 'image/svg+xml');
+    assert.ok(Math.abs(bg.duration - 2) < 0.05, `蓋住整段影片 ${bg.duration}`);
+    await page.click('[data-graphic="heart"]');
+    await waitFor(async () => (await state()).project.clips.length === 3, 5000, '貼圖');
+    s = await state();
+    const heart = s.project.clips.find(c => c.name === '愛心');
+    assert.equal(heart.trackId, s.project.tracks.find(t => t.kind === 'video').id, '在最上面');
+    assert.ok(heart.transform.scale < 0.5 && heart.transform.x > 0 && heart.transform.y < 0, '右上角的小貼圖');
+    assert.ok(heart.duration <= 2 + 1e-6, `不超過影片結尾 ${heart.duration}`);
+    const mediaCount = Object.keys(s.project.media).length;
+    await page.click('[data-graphic="heart"]');
+    await waitFor(async () => (await state()).project.clips.length === 4, 5000, '第二個貼圖');
+    assert.equal(Object.keys((await state()).project.media).length, mediaCount, '重複使用同一個素材');
+  });
+
+  await test('圖案匯出：SVG 背景畫得出來', async () => {
+    await newProjectUI();
+    await page.click('.tab[data-tab="graphics"]');
+    await page.click('[data-graphic="cinema"]');
+    await page.click('[data-graphic="mint"]');
+    await waitFor(async () => (await state()).project.clips.length === 2, 5000, '加入');
+    const at = await exportedColors('graphics', 1);
+    const rgb = (str) => str.match(/\d+/g).map(Number);
+    const [r, g, b] = rgb(at(0.5, 0.5));
+    assert.ok(g > 180 && g > r && g > b, `中間是薄荷綠 ${at(0.5, 0.5)}`);
+    assert.ok(rgb(at(0.5, 0.02)).every(v => v < 30), `上面是電影黑邊 ${at(0.5, 0.02)}`);
+    // 換成直式：背景與邊框的縮圖依新的比例重畫
+    await page.selectOption('#aspectSelect', '9:16');
+    await waitFor(() => page.evaluate(() => decodeURIComponent(document.querySelector('[data-graphic="mint"] img').src).includes('width="1080" height="1920"')), 3000, '直式縮圖');
+  });
+
   console.log('\n首頁與手機版');
   await test('首頁載入、連結到編輯器', async () => {
     const p2 = await context.newPage();

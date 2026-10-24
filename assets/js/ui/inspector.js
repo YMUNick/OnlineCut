@@ -1,6 +1,6 @@
 // 右側屬性面板：專案設定 / 片段屬性
 
-import { updateClip, renameProject, setAspect, ASPECT_PRESETS, getDuration, clipEnd } from '../core/project.js';
+import { updateClip, renameProject, setAspect, ASPECT_PRESETS, getDuration, clipEnd, canFrame, MIN_FRAME } from '../core/project.js';
 import { formatTimecode, formatDuration, clamp } from '../core/time.js';
 import { icon } from './icons.js';
 import { escapeHtml } from './dialogs.js';
@@ -52,7 +52,8 @@ export class Inspector {
   /** 選取改變時重建；其他變動只更新數值，避免打斷正在操作的控制項 */
   update(force = false) {
     const sel = this.store.selection;
-    const key = sel.length === 1 ? sel[0] : sel.length > 1 ? `multi:${sel.length}` : 'project';
+    // 套用 / 取消版型會換掉整個區塊，所以也算進 key
+    const key = sel.length === 1 ? `${sel[0]}${this.store.selectedClip?.frame ? ':framed' : ''}` : sel.length > 1 ? `multi:${sel.length}` : 'project';
     if (force || key !== this.renderedFor) {
       this.renderedFor = key;
       this.build();
@@ -107,7 +108,8 @@ export class Inspector {
     timing.appendChild(acts);
 
     if (clip.type === 'text') this.buildText();
-    if (clip.type !== 'audio') this.buildTransform();
+    if (clip.frame) this.buildFrame();
+    else if (clip.type !== 'audio') this.buildTransform();
     this.buildAppearance(clip);
     if (clip.type === 'video' || clip.type === 'image') this.buildFilters();
     if (clip.type === 'video' || clip.type === 'audio') this.buildAudio(clip);
@@ -290,7 +292,59 @@ export class Inspector {
     };
     const clip = this.store.selectedClip;
     if (clip?.type === 'text') acts.querySelectorAll('[data-a="fit"],[data-a="fill"]').forEach(b => b.remove());
+    if (canFrame(clip)) {
+      const b = document.createElement('button');
+      b.className = 'chip';
+      b.innerHTML = '雙畫面版型…';
+      b.title = '子母畫面、圓形小窗、分割畫面';
+      b.onclick = (e) => { e.stopPropagation(); this.actions.showLayouts?.(); };
+      acts.appendChild(b);
+    }
     s.appendChild(acts);
+  }
+
+  /** 有畫面框（套用了版型）的片段：框的位置、形狀、邊框，以及框裡的取景 */
+  buildFrame() {
+    const p = () => this.store.project;
+    const s = this.section('畫面框', `<button class="link-btn" data-unframe>${icon('close', 'icon-sm')}取消版型</button>`);
+    s.querySelector('[data-unframe]').onclick = () => this.commit(() => ({ frame: null, transform: { x: 0, y: 0, scale: 1, rotation: 0 } }), 'unframe');
+    const shape = this.seg([['rect', '方形'], ['round', '圓角'], ['circle', '圓形']], (v) => this.commit((c) => {
+      if (v !== 'circle') return { frame: { shape: v } };
+      // 圓形：用寬高中比較短的一邊做成正圓，中心不動
+      const f = c.frame, W = p().width, H = p().height;
+      const d = Math.min(f.w * W, f.h * H);
+      return { frame: { shape: v, x: f.x + f.w / 2 - d / W / 2, y: f.y + f.h / 2 - d / H / 2, w: d / W, h: d / H } };
+    }, 'shape'), (c) => c.frame?.shape);
+    s.appendChild(this.row('形狀', shape, true));
+    const pct = (label, k, key, reset) => this.slider(label, {
+      min: k === 'w' || k === 'h' ? MIN_FRAME * 100 : 0, max: 100, step: 0.5, unit: '%', decimals: 1, key, reset,
+      get: c => (c.frame?.[k] ?? 0) * 100, set: v => ({ frame: { [k]: v / 100 } }), hardMin: k === 'w' || k === 'h' ? MIN_FRAME * 100 : -100, hardMax: 200,
+    });
+    s.appendChild(pct('左邊', 'x', 'fx', 0));
+    s.appendChild(pct('上方', 'y', 'fy', 0));
+    s.appendChild(pct('寬度', 'w', 'fw', 100));
+    s.appendChild(pct('高度', 'h', 'fh', 100));
+    s.appendChild(this.slider('邊框', { min: 0, max: 40, step: 1, unit: 'px', get: c => c.frame?.border ?? 0, set: v => ({ frame: { border: v } }), key: 'fborder', hardMax: 60 }));
+    const bc = this.colorInput(v => this.commit(() => ({ frame: { borderColor: v } }), 'fcolor'));
+    this.bind(bc.input, c => { if (c?.frame) bc.set(c.frame.borderColor); });
+    const shadow = document.createElement('input');
+    shadow.type = 'checkbox';
+    shadow.onchange = () => this.commit(() => ({ frame: { shadow: shadow.checked } }), 'fshadow');
+    this.bind(shadow, c => { shadow.checked = !!c?.frame?.shadow; });
+    const shLbl = document.createElement('label');
+    shLbl.className = 'check';
+    shLbl.append(shadow, document.createTextNode('陰影'));
+    const wrap = document.createElement('div');
+    wrap.style.cssText = 'display:flex;align-items:center;gap:14px';
+    wrap.append(bc.el, shLbl);
+    s.appendChild(this.row('邊框色', wrap, true));
+
+    const v = this.section('取景', `<button class="link-btn" data-reset>${icon('reset', 'icon-sm')}重設</button>`);
+    v.querySelector('[data-reset]').onclick = () => this.commit(() => ({ transform: { x: 0, y: 0, scale: 1 } }), 'freset');
+    v.appendChild(this.slider('縮放', { min: 100, max: 400, step: 1, unit: '%', get: c => Math.round(c.transform.scale * 100), set: v => ({ transform: { scale: v / 100 } }), key: 'scale', hardMin: 20, hardMax: 1000 }));
+    v.appendChild(this.slider('水平', { min: () => -p().width / 2, max: () => p().width / 2, step: 1, unit: 'px', get: c => Math.round(c.transform.x), set: v => ({ transform: { x: v } }), key: 'x', hardMin: -1e5, hardMax: 1e5 }));
+    v.appendChild(this.slider('垂直', { min: () => -p().height / 2, max: () => p().height / 2, step: 1, unit: 'px', get: c => Math.round(c.transform.y), set: v => ({ transform: { y: v } }), key: 'y', hardMin: -1e5, hardMax: 1e5 }));
+    v.insertAdjacentHTML('beforeend', '<p class="hint-line">影像會裁切填滿畫面框。在預覽上拖曳移動畫面框、拉角落調整大小；按住 <kbd>Alt</kbd> 拖曳或用滾輪調整框裡的取景。</p>');
   }
 
   buildAppearance(clip) {
@@ -378,7 +432,7 @@ export class Inspector {
   }
 
   /** 滑桿 + 數字輸入 */
-  slider(label, { min, max, step, unit = '', decimals = 0, get, set, key, disabled, hardMin, hardMax }) {
+  slider(label, { min, max, step, unit = '', decimals = 0, get, set, key, disabled, hardMin, hardMax, reset }) {
     const r = document.createElement('div');
     r.className = 'field';
     const id = `f_${Math.random().toString(36).slice(2, 8)}`;
@@ -408,7 +462,7 @@ export class Inspector {
       }
     });
     num.addEventListener('focus', () => num.select());
-    range.addEventListener('dblclick', () => apply(key === 'scale' ? 100 : key === 'opacity' || key === 'vol' ? 100 : key === 'speed' ? 100 : ['br', 'ct', 'sat'].includes(key) ? 100 : 0));
+    range.addEventListener('dblclick', () => apply(reset != null ? reset : key === 'scale' ? 100 : key === 'opacity' || key === 'vol' ? 100 : key === 'speed' ? 100 : ['br', 'ct', 'sat'].includes(key) ? 100 : 0));
     this.bind(range, (c) => {
       if (!c) return;
       range.min = val(min);

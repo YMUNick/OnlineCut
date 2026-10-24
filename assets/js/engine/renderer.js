@@ -19,6 +19,11 @@ export function fontString(text, size = text.fontSize) {
 export function clipLayout(project, clip, mediaInfo, measureText) {
   const W = project.width, H = project.height;
   const { x, y, scale, rotation } = clip.transform;
+  if (clip.frame && clip.type !== 'text') {
+    // 有畫面框：範圍就是框本身，不旋轉
+    const f = clip.frame;
+    return { cx: (f.x + f.w / 2) * W, cy: (f.y + f.h / 2) * H, w: f.w * W, h: f.h * H, rotation: 0, framed: true };
+  }
   let w, h;
   if (clip.type === 'text') {
     const t = clip.text;
@@ -35,6 +40,32 @@ export function clipLayout(project, clip, mediaInfo, measureText) {
     h = mh * fit * scale;
   }
   return { cx: W / 2 + x, cy: H / 2 + y, w, h, rotation };
+}
+
+/**
+ * 畫面框裡的影像位置（相對於框的中心）：裁切填滿框，
+ * transform.scale 是取景縮放、transform.x / y 是取景平移。
+ */
+export function framedContent(clip, layout, mediaInfo) {
+  const mw = mediaInfo?.width || layout.w, mh = mediaInfo?.height || layout.h;
+  const s = Math.max(layout.w / mw, layout.h / mh) * clip.transform.scale;
+  const w = mw * s, h = mh * s;
+  return { x: clip.transform.x - w / 2, y: clip.transform.y - h / 2, w, h };
+}
+
+/** 畫面框的形狀路徑（以框的中心為原點） */
+export function framePath(ctx, shape, w, h, inset = 0) {
+  const x = -w / 2 + inset, y = -h / 2 + inset;
+  const iw = Math.max(0, w - inset * 2), ih = Math.max(0, h - inset * 2);
+  if (shape === 'circle') {
+    ctx.beginPath();
+    ctx.ellipse(0, 0, iw / 2, ih / 2, 0, 0, Math.PI * 2);
+  } else if (shape === 'round') {
+    roundRect(ctx, x, y, iw, ih, Math.max(0, Math.min(w, h) * 0.08 - inset));
+  } else {
+    ctx.beginPath();
+    ctx.rect(x, y, iw, ih);
+  }
 }
 
 /** 點 (px, py) 是否落在旋轉後的片段範圍內 */
@@ -107,20 +138,55 @@ export function drawFrame(ctx, project, t, { getSource, getMediaInfo }) {
 
     if (clip.type === 'text') {
       drawText(ctx, clip, layout);
+    } else if (layout.framed) {
+      ctx.filter = 'none';
+      drawFramed(ctx, clip, layout, getSource(clip), getMediaInfo(clip), filter, k);
     } else {
-      const src = getSource(clip);
-      if (src && isDrawable(src)) {
-        try {
-          // mediabunny 的 VideoSample 自己會處理旋轉資訊（手機直拍影片）
-          if (typeof src.draw === 'function') src.draw(ctx, -layout.w / 2, -layout.h / 2, layout.w, layout.h);
-          else ctx.drawImage(src, -layout.w / 2, -layout.h / 2, layout.w, layout.h);
-        } catch { /* 畫面尚未就緒 */ }
-      }
+      drawSource(ctx, getSource(clip), -layout.w / 2, -layout.h / 2, layout.w, layout.h);
     }
     ctx.restore();
   }
   ctx.restore();
   return layouts;
+}
+
+function drawSource(ctx, src, x, y, w, h) {
+  if (!src || !isDrawable(src)) return;
+  try {
+    // mediabunny 的 VideoSample 自己會處理旋轉資訊（手機直拍影片）
+    if (typeof src.draw === 'function') src.draw(ctx, x, y, w, h);
+    else ctx.drawImage(src, x, y, w, h);
+  } catch { /* 畫面尚未就緒 */ }
+}
+
+function drawFramed(ctx, clip, layout, src, mediaInfo, filter, k) {
+  const f = clip.frame;
+  const { w, h } = layout;
+  if (f.shadow) {
+    // shadowBlur / offset 不受 transform 影響，要自己換算成 canvas 像素
+    const short = Math.min(w, h);
+    ctx.save();
+    ctx.shadowColor = 'rgba(0, 0, 0, 0.45)';
+    ctx.shadowBlur = short * 0.08 * k;
+    ctx.shadowOffsetY = short * 0.02 * k;
+    ctx.fillStyle = '#000';
+    framePath(ctx, f.shape, w, h);
+    ctx.fill();
+    ctx.restore();
+  }
+  ctx.save();
+  framePath(ctx, f.shape, w, h);
+  ctx.clip();
+  if (filter !== 'none') ctx.filter = filter;
+  const c = framedContent(clip, layout, mediaInfo);
+  drawSource(ctx, src, c.x, c.y, c.w, c.h);
+  ctx.restore();
+  if (f.border > 0) {
+    ctx.lineWidth = f.border;
+    ctx.strokeStyle = f.borderColor;
+    framePath(ctx, f.shape, w, h, f.border / 2);
+    ctx.stroke();
+  }
 }
 
 function isDrawable(src) {

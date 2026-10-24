@@ -119,7 +119,7 @@
 
 .tabs { display: flex; gap: 2px; padding: 6px 8px 0; border-bottom: 1px solid var(--line); flex: none; }
 .tab {
-  border: 0; background: none; color: var(--text-3); height: 38px; padding: 0 12px; display: inline-flex; align-items: center; gap: 7px;
+  border: 0; background: none; color: var(--text-3); height: 38px; padding: 0 6px; display: inline-flex; align-items: center; justify-content: center; gap: 5px; flex: 1 1 0; white-space: nowrap;
   font-weight: 600; border-bottom: 2px solid transparent; margin-bottom: -1px;
 }
 .tab:hover { color: var(--text); }
@@ -184,6 +184,29 @@
 
 /* 文字樣板 */
 .text-presets { display: grid; gap: 10px; }
+
+/* 圖案、版型 */
+.panel-sub { margin: 16px 0 8px; font-size: 11px; font-weight: 700; letter-spacing: .06em; color: var(--text-3); }
+.panel-note + .panel-sub { margin-top: 4px; }
+.graphic-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+.graphic-grid.sticker { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+.graphic-opt, .layout-opt {
+  border: 1px solid var(--line); background: var(--panel-2); border-radius: var(--radius); padding: 6px; color: var(--text-2);
+  display: grid; gap: 6px; justify-items: center; text-align: center; transition: border-color var(--dur), transform var(--dur);
+}
+.graphic-opt:hover, .layout-opt:hover { border-color: var(--accent); color: var(--text); transform: translateY(-1px); }
+.graphic-opt small, .layout-opt small { font-size: 11px; line-height: 1.3; }
+.graphic-thumb { width: 100%; aspect-ratio: var(--ratio, 16/9); border-radius: 4px; overflow: hidden; display: grid; place-items: center; }
+.graphic-grid.sticker .graphic-thumb { aspect-ratio: 1; }
+.graphic-thumb img { width: 100%; height: 100%; object-fit: contain; display: block; }
+/* 邊框與貼圖是透明的，墊一張示意的照片底色才看得出來 */
+.graphic-grid.frame .graphic-thumb, .graphic-grid.sticker .graphic-thumb { background: linear-gradient(160deg, #6a7c93, #2c3644 70%); }
+.graphic-grid.sticker .graphic-thumb img { width: 82%; height: 82%; }
+.layout-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; --lay-bg: #24272d; --lay-main: #4a5160; --lay-sub: var(--accent); --lay-line: #fff; }
+.layout-opt { padding: 10px 6px 8px; }
+.layout-opt svg { display: block; height: 44px; width: auto; }
+.layout-opt.on { border-color: var(--accent); background: var(--accent-soft); color: var(--text); }
+.layout-cancel { width: 100%; justify-content: center; margin-top: 14px; }
 .text-preset {
   border: 1px solid var(--line); background: var(--panel-2); border-radius: var(--radius); padding: 16px 12px; text-align: center;
   color: #fff; min-height: 76px; display: grid; place-items: center; transition: border-color var(--dur), transform var(--dur);
@@ -202,6 +225,10 @@
 .sel-handle { position: absolute; width: 12px; height: 12px; background: #fff; border: 2px solid var(--accent); border-radius: 3px; transform: translate(-50%, -50%); }
 .sel-handle.nw { left: 0; top: 0; cursor: nwse-resize; } .sel-handle.ne { left: 100%; top: 0; cursor: nesw-resize; }
 .sel-handle.sw { left: 0; top: 100%; cursor: nesw-resize; } .sel-handle.se { left: 100%; top: 100%; cursor: nwse-resize; }
+.sel-box.circle { border-radius: 50%; }
+.sel-box.circle .sel-handle { display: none; }
+.sel-box.circle::after { content: ''; position: absolute; inset: 0; outline: 1px dashed rgba(255,255,255,.35); }
+.sel-box.circle .sel-handle.se { display: block; left: 85.4%; top: 85.4%; }
 .sel-rotate { position: absolute; left: 50%; top: -28px; width: 14px; height: 14px; border-radius: 50%; background: #fff; border: 2px solid var(--accent); transform: translateX(-50%); cursor: grab; }
 .sel-rotate::after { content: ''; position: absolute; left: 50%; top: 12px; width: 1.5px; height: 14px; background: var(--accent); transform: translateX(-50%); }
 .guide { position: absolute; background: #ff3df5; pointer-events: none; }
@@ -410,6 +437,7 @@
 @media (max-width: 1180px) {
   .app { grid-template-columns: 240px minmax(0, 1fr) 272px; }
   .topbar .label, .tl-tools .label { display: none; }
+  .tab .icon { display: none; }
   .tool-btn { padding: 0 8px; }
 }
 @media (max-width: 900px) {
