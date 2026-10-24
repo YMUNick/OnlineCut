@@ -1,0 +1,13 @@
+{
+  "name": "onlinecut",
+  "version": "1.0.0",
+  "private": true,
+  "description": "免費、免安裝、檔案不上傳的線上影片剪輯器",
+  "type": "module",
+  "license": "MIT",
+  "scripts": {
+    "test": "node --test tests/unit/*.test.js",
+    "test:e2e": "node tests/e2e/run.mjs",
+    "serve": "python3 -m http.server 8080"
+  }
+}

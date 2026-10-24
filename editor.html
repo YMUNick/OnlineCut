@@ -1,0 +1,165 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>編輯器 · OnlineCut</title>
+  <meta name="description" content="OnlineCut 線上剪輯器：多軌時間軸、文字、濾鏡、淡入淡出，匯出 MP4。檔案只在你的瀏覽器裡處理。">
+  <meta name="theme-color" content="#0e0f11">
+  <link rel="icon" href="assets/img/favicon.svg" type="image/svg+xml">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+TC:wght@400;700;900&family=Noto+Serif+TC:wght@700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="assets/css/base.css">
+  <link rel="stylesheet" href="assets/css/editor.css">
+</head>
+<body class="editor">
+  <div class="app" id="app">
+    <!-- 頂端列 -->
+    <header class="topbar">
+      <a class="brand" href="index.html" title="回到首頁">
+        <span class="brand-mark" data-icon="logo"></span>
+        <span class="brand-name">OnlineCut</span>
+      </a>
+      <div class="topbar-divider"></div>
+      <div class="project-title">
+        <input id="projectName" class="project-name" value="未命名專案" aria-label="專案名稱" maxlength="120" spellcheck="false">
+        <span class="save-state" id="saveState" aria-live="polite"></span>
+      </div>
+      <div class="topbar-center">
+        <button class="icon-btn" id="btnUndo" title="復原 (Ctrl+Z)" aria-label="復原" data-icon="undo"></button>
+        <button class="icon-btn" id="btnRedo" title="重做 (Ctrl+Shift+Z)" aria-label="重做" data-icon="redo"></button>
+      </div>
+      <div class="topbar-right">
+        <button class="ghost-btn" id="btnNew" title="新專案"><span data-icon="newFile"></span><span class="label">新專案</span></button>
+        <button class="ghost-btn" id="btnShortcuts" title="快捷鍵 (?)"><span data-icon="keyboard"></span><span class="label">快捷鍵</span></button>
+        <button class="primary-btn" id="btnExport" title="匯出影片 (Ctrl+E)"><span data-icon="download"></span><span>匯出</span></button>
+      </div>
+    </header>
+
+    <!-- 左側：素材 / 文字 -->
+    <aside class="panel panel-left" id="panelLeft" aria-label="素材庫">
+      <div class="tabs" role="tablist">
+        <button class="tab active" role="tab" aria-selected="true" data-tab="media"><span data-icon="film"></span>素材</button>
+        <button class="tab" role="tab" aria-selected="false" data-tab="text"><span data-icon="type"></span>文字</button>
+      </div>
+      <section class="tab-panel" data-panel="media">
+        <div class="dropzone" id="dropzone" tabindex="0" role="button" aria-label="匯入素材">
+          <span data-icon="upload" class="dz-icon"></span>
+          <div class="dz-title">匯入影片、音樂或圖片</div>
+          <div class="dz-hint">點這裡選檔，或直接拖進視窗</div>
+        </div>
+        <input type="file" id="fileInput" multiple accept="video/*,audio/*,image/*" hidden>
+        <div class="media-grid" id="mediaGrid"></div>
+        <div class="media-empty" id="mediaEmpty">
+          <p>還沒有素材。</p>
+          <button class="link-btn" id="btnSample"><span data-icon="sparkle"></span>用範例素材試試看</button>
+        </div>
+      </section>
+      <section class="tab-panel" data-panel="text" hidden>
+        <p class="panel-note">點一下加到播放頭的位置，之後可以在右側調整內容與樣式。</p>
+        <div class="text-presets" id="textPresets"></div>
+      </section>
+      <div class="panel-footer">
+        <span data-icon="shield" class="icon-sm"></span>
+        <span>檔案只存在這台裝置，不會上傳</span>
+      </div>
+    </aside>
+
+    <!-- 中間：預覽 -->
+    <main class="stage" id="stage" aria-label="預覽">
+      <div class="viewport" id="viewport">
+        <div class="frame" id="frame">
+          <canvas id="previewCanvas" width="1280" height="720" aria-label="影片預覽"></canvas>
+          <div class="overlay" id="overlay"></div>
+          <div class="welcome" id="welcome" hidden>
+            <div class="welcome-card">
+              <h2>開始你的第一支影片</h2>
+              <p>把影片、音樂或圖片拖進來，或從左側匯入。全部都在你的瀏覽器裡處理，不會上傳。</p>
+              <div class="welcome-actions">
+                <button class="primary-btn" id="welcomeImport"><span data-icon="upload"></span>匯入素材</button>
+                <button class="ghost-btn" id="welcomeSample"><span data-icon="sparkle"></span>載入範例專案</button>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div class="transport">
+        <div class="tc"><span id="tcNow">00:00:00:00</span><span class="tc-sep">/</span><span id="tcTotal" class="tc-total">00:00:00:00</span></div>
+        <div class="transport-center">
+          <button class="icon-btn" id="btnStart" title="跳到開頭 (Home)" aria-label="跳到開頭" data-icon="skipStart"></button>
+          <button class="icon-btn" id="btnPrev" title="上一格 (←)" aria-label="上一格" data-icon="stepBack"></button>
+          <button class="play-btn" id="btnPlay" title="播放 / 暫停 (空白鍵)" aria-label="播放" data-icon="play"></button>
+          <button class="icon-btn" id="btnNext" title="下一格 (→)" aria-label="下一格" data-icon="stepFwd"></button>
+          <button class="icon-btn" id="btnEnd" title="跳到結尾 (End)" aria-label="跳到結尾" data-icon="skipEnd"></button>
+        </div>
+        <div class="transport-right">
+          <label class="vol" title="預覽音量">
+            <span data-icon="volume" id="volIcon"></span>
+            <input type="range" id="masterVol" min="0" max="1" step="0.01" value="1" aria-label="預覽音量">
+          </label>
+          <select id="aspectSelect" class="select-sm" aria-label="畫面比例" title="畫面比例"></select>
+          <button class="icon-btn" id="btnFullscreen" title="全螢幕預覽" aria-label="全螢幕預覽" data-icon="expand"></button>
+        </div>
+      </div>
+    </main>
+
+    <!-- 右側：屬性 -->
+    <aside class="panel panel-right" id="panelRight" aria-label="屬性">
+      <div class="panel-head"><span data-icon="sliders"></span><h2 id="inspectorTitle">專案設定</h2></div>
+      <div class="inspector" id="inspector"></div>
+    </aside>
+
+    <!-- 時間軸 -->
+    <section class="timeline-wrap" id="timelineWrap" aria-label="時間軸">
+      <div class="resizer" id="resizer" title="拖曳調整高度" role="separator" aria-orientation="horizontal"></div>
+      <div class="tl-toolbar">
+        <div class="tl-tools">
+          <button class="tool-btn" id="btnSplit" title="在播放頭分割 (S)"><span data-icon="split"></span><span class="label">分割</span></button>
+          <button class="tool-btn" id="btnDelete" title="刪除 (Delete)，按住 Shift 波紋刪除"><span data-icon="trash"></span><span class="label">刪除</span></button>
+          <button class="tool-btn" id="btnDuplicate" title="複製 (Ctrl+D)"><span data-icon="copy"></span><span class="label">複製</span></button>
+          <div class="tl-sep"></div>
+          <button class="tool-btn toggle" id="btnRipple" aria-pressed="false" title="波紋模式：刪除後自動補位"><span data-icon="ripple"></span><span class="label">波紋</span></button>
+          <button class="tool-btn toggle on" id="btnSnap" aria-pressed="true" title="吸附 (N)"><span data-icon="magnet"></span><span class="label">吸附</span></button>
+        </div>
+        <div class="tl-zoom">
+          <button class="icon-btn" id="btnZoomOut" title="縮小 (Ctrl+-)" aria-label="縮小時間軸" data-icon="zoomOut"></button>
+          <input type="range" id="zoomRange" min="0" max="100" step="1" value="40" aria-label="時間軸縮放">
+          <button class="icon-btn" id="btnZoomIn" title="放大 (Ctrl+=)" aria-label="放大時間軸" data-icon="zoomIn"></button>
+          <button class="icon-btn" id="btnZoomFit" title="符合視窗 (Shift+Z)" aria-label="時間軸符合視窗" data-icon="fit"></button>
+        </div>
+      </div>
+      <div class="timeline" id="timeline">
+        <div class="tl-heads" id="tlHeads">
+          <div class="tl-corner">
+            <button class="mini-btn" id="btnAddVideoTrack" title="新增影像軌"><span data-icon="plus" class="icon-sm"></span>影像軌</button>
+            <button class="mini-btn" id="btnAddAudioTrack" title="新增音訊軌"><span data-icon="plus" class="icon-sm"></span>音訊軌</button>
+          </div>
+          <div class="tl-head-list" id="tlHeadList"></div>
+        </div>
+        <div class="tl-scroll" id="tlScroll">
+          <div class="tl-content" id="tlContent">
+            <canvas class="tl-ruler" id="tlRuler" height="28"></canvas>
+            <div class="tl-tracks" id="tlTracks"></div>
+            <div class="tl-snapline" id="tlSnapline" hidden></div>
+            <div class="tl-playhead" id="tlPlayhead"><div class="tl-playhead-cap"></div></div>
+          </div>
+        </div>
+      </div>
+    </section>
+  </div>
+
+  <div class="drop-overlay" id="dropOverlay" hidden>
+    <div class="drop-overlay-inner"><span data-icon="upload" class="icon-lg"></span>放開就會匯入</div>
+  </div>
+  <div class="toasts" id="toasts" aria-live="polite"></div>
+  <div class="modal-root" id="modalRoot"></div>
+  <div class="mobile-note" id="mobileNote">
+    <span data-icon="info"></span>
+    <span>手機上可以操作，但用電腦剪輯會順手很多。</span>
+    <button class="icon-btn" id="mobileNoteClose" aria-label="關閉" data-icon="close"></button>
+  </div>
+
+  <script type="module" src="assets/js/app.js"></script>
+</body>
+</html>

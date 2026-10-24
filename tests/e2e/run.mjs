@@ -1,0 +1,573 @@
+#!/usr/bin/env node
+// 端到端測試：在真的 Chromium 裡匯入素材、剪輯、儲存、匯出，並用 ffprobe 檢查輸出檔。
+//
+// 需要：playwright（含 chromium）、ffmpeg / ffprobe
+// 執行：node tests/e2e/run.mjs
+
+import { chromium } from 'playwright';
+import { createServer } from 'node:http';
+import { readFile, mkdtemp, rm, stat } from 'node:fs/promises';
+import { execFileSync, spawnSync } from 'node:child_process';
+import { tmpdir } from 'node:os';
+import path from 'node:path';
+import assert from 'node:assert/strict';
+
+const ROOT = path.resolve(path.dirname(new URL(import.meta.url).pathname), '../..');
+const TYPES = { '.html': 'text/html', '.js': 'text/javascript', '.mjs': 'text/javascript', '.css': 'text/css', '.svg': 'image/svg+xml', '.png': 'image/png', '.json': 'application/json', '.webp': 'image/webp' };
+
+let failures = 0, passed = 0;
+async function test(name, fn) {
+  const t0 = Date.now();
+  try {
+    await fn();
+    passed++;
+    console.log(`  ✓ ${name} (${Date.now() - t0}ms)`);
+  } catch (e) {
+    failures++;
+    console.log(`  ✗ ${name}\n      ${String(e.stack || e).split('\n').slice(0, 6).join('\n      ')}`);
+  }
+}
+
+function serve() {
+  const server = createServer(async (req, res) => {
+    try {
+      let p = decodeURIComponent(new URL(req.url, 'http://x').pathname);
+      if (p.endsWith('/')) p += 'index.html';
+      const file = path.join(ROOT, path.normalize(p));
+      if (!file.startsWith(ROOT)) throw new Error('forbidden');
+      const body = await readFile(file);
+      res.writeHead(200, { 'content-type': TYPES[path.extname(file)] || 'application/octet-stream' });
+      res.end(body);
+    } catch {
+      res.writeHead(404).end('not found');
+    }
+  });
+  return new Promise(r => server.listen(0, '127.0.0.1', () => r(server)));
+}
+
+function ffmpeg(args) { execFileSync('ffmpeg', ['-hide_banner', '-loglevel', 'error', '-y', ...args]); }
+function probe(file) {
+  return JSON.parse(execFileSync('ffprobe', ['-v', 'error', '-show_format', '-show_streams', '-of', 'json', file]).toString());
+}
+
+async function makeFixtures(dir) {
+  const f = {
+    video: path.join(dir, 'clip.mp4'), // 註：Playwright 的 setInputFiles 會漏掉中文檔名，所以測試檔用英文
+    portrait: path.join(dir, 'vertical.mp4'),
+    silent: path.join(dir, 'silent.webm'),
+    audio: path.join(dir, 'tone.mp3'),
+    image: path.join(dir, 'photo.png'),
+    bad: path.join(dir, 'notes.txt'),
+    fake: path.join(dir, 'broken.mp4'),
+    rotated: path.join(dir, 'phone.mp4'),
+  };
+  ffmpeg(['-f', 'lavfi', '-i', 'testsrc2=size=640x360:rate=30:duration=4', '-f', 'lavfi', '-i', 'sine=frequency=440:duration=4', '-c:v', 'libx264', '-pix_fmt', 'yuv420p', '-c:a', 'aac', '-shortest', f.video]);
+  ffmpeg(['-f', 'lavfi', '-i', 'testsrc2=size=360x640:rate=30:duration=3', '-f', 'lavfi', '-i', 'sine=frequency=660:duration=3', '-c:v', 'libx264', '-pix_fmt', 'yuv420p', '-c:a', 'aac', '-shortest', f.portrait]);
+  ffmpeg(['-f', 'lavfi', '-i', 'testsrc2=size=320x240:rate=24:duration=2', '-c:v', 'libvpx', '-b:v', '300k', f.silent]);
+  ffmpeg(['-f', 'lavfi', '-i', 'sine=frequency=330:duration=5', '-c:a', 'libmp3lame', '-b:a', '96k', f.audio]);
+  ffmpeg(['-f', 'lavfi', '-i', 'color=c=orange:size=800x600:duration=1', '-frames:v', '1', f.image]);
+  // 模擬手機直拍：實際存的是橫的畫面（左紅右藍），加上旋轉 90° 的標記
+  const plain = path.join(dir, 'plain.mp4');
+  ffmpeg(['-f', 'lavfi', '-i', 'color=red:s=320x360:d=2[a];color=blue:s=320x360:d=2[b];[a][b]hstack', '-c:v', 'libx264', '-pix_fmt', 'yuv420p', plain]);
+  ffmpeg(['-display_rotation', '90', '-i', plain, '-c', 'copy', f.rotated]);
+  await import('node:fs').then(fs => {
+    fs.writeFileSync(f.bad, 'hello');
+    fs.writeFileSync(f.fake, Buffer.from('this is not a video'));
+  });
+  return f;
+}
+
+// ----------------------------------------------------------------
+const tmp = await mkdtemp(path.join(tmpdir(), 'onlinecut-e2e-'));
+const fx = await makeFixtures(tmp);
+const server = await serve();
+const BASE = `http://127.0.0.1:${server.address().port}`;
+const browser = await chromium.launch();
+const context = await browser.newContext({ viewport: { width: 1440, height: 900 }, acceptDownloads: true });
+const page = await context.newPage();
+const errors = [];
+page.on('pageerror', e => errors.push(e.message));
+page.on('console', m => { if (m.type() === 'error') errors.push(m.text()); });
+// 記錄所有錯誤通知，最後檢查有沒有預期以外的
+await context.addInitScript(() => {
+  // 存在 sessionStorage，重新整理之後也不會遺失
+  const KEY = '__errorToasts';
+  document.addEventListener('DOMContentLoaded', () => {
+    if (!document.getElementById('toasts')) return; // 首頁沒有通知區
+    new MutationObserver(ms => ms.forEach(m => m.addedNodes.forEach(n => {
+      if (!n.classList?.contains('error')) return;
+      const list = JSON.parse(sessionStorage.getItem(KEY) || '[]');
+      list.push(n.textContent);
+      sessionStorage.setItem(KEY, JSON.stringify(list));
+    }))).observe(document.getElementById('toasts'), { childList: true });
+  });
+});
+// 字型走外網，測試環境不載入
+await context.route(/fonts\.(googleapis|gstatic)\.com/, r => r.fulfill({ body: '', contentType: 'text/css' }));
+
+const state = () => page.evaluate(() => {
+  const { store, player } = window.__oc;
+  return { project: store.project, selection: store.selection, time: player.time, playing: player.playing, canUndo: store.history.canUndo };
+});
+const clipBox = async (id) => page.locator(`.clip[data-clip-id="${id}"]`).boundingBox();
+const waitFor = async (fn, timeout = 10000, label = 'condition') => {
+  const end = Date.now() + timeout;
+  while (Date.now() < end) { if (await fn()) return; await page.waitForTimeout(100); }
+  throw new Error(`等待逾時：${label}`);
+};
+
+try {
+  console.log('編輯器');
+  await page.goto(`${BASE}/editor.html`);
+  await page.waitForFunction(() => window.__oc);
+
+  await test('第一次開啟顯示歡迎畫面、沒有 JS 錯誤', async () => {
+    assert.equal(await page.isVisible('#welcome'), true);
+    assert.deepEqual(errors, []);
+  });
+
+  await test('匯入不支援的檔案會顯示錯誤，不會壞掉', async () => {
+    await page.setInputFiles('#fileInput', [fx.bad, fx.fake]);
+    await waitFor(async () => (await page.locator('.toast.error').count()) >= 2, 10000, '兩個錯誤通知');
+    const s = await state();
+    assert.equal(Object.keys(s.project.media).length, 0);
+    assert.equal(await page.locator('.media-card.loading').count(), 0);
+  });
+
+  await test('匯入影片 + 音樂 + 圖片：自動排進時間軸', async () => {
+    await page.setInputFiles('#fileInput', [fx.video, fx.audio, fx.image]);
+    await waitFor(async () => (await state()).project.clips.length === 3, 15000, '3 個片段');
+    const s = await state();
+    const types = s.project.clips.map(c => c.type).sort();
+    assert.deepEqual(types, ['audio', 'image', 'video']);
+    const v = s.project.clips.find(c => c.type === 'video');
+    assert.ok(Math.abs(v.duration - 4) < 0.1, `影片長度 ${v.duration}`);
+    const a = s.project.clips.find(c => c.type === 'audio');
+    assert.ok(Math.abs(a.duration - 5) < 0.15, `音訊長度 ${a.duration}`);
+    const img = s.project.clips.find(c => c.type === 'image');
+    assert.equal(img.start, v.duration, '圖片接在影片後面');
+    assert.equal(s.project.aspect, '16:9');
+    assert.equal(await page.isVisible('#welcome'), false);
+    assert.equal(await page.locator('.media-card:not(.loading)').count(), 3);
+  });
+
+  await test('產生縮圖與波形', async () => {
+    await waitFor(() => page.evaluate(() => {
+      const items = [...window.__oc.runtime.items.values()];
+      return items.find(i => i.info.type === 'video')?.thumbs.length > 0 && items.find(i => i.info.type === 'audio')?.peaks;
+    }), 15000, '縮圖與波形');
+  });
+
+  await test('播放：時間往前走、畫面有內容；暫停', async () => {
+    await page.keyboard.press('Home');
+    await page.locator('#tlScroll').click({ position: { x: 5, y: 200 } }).catch(() => {});
+    await page.evaluate(() => window.__oc.player.seek(0));
+    await page.click('#btnPlay');
+    await page.waitForTimeout(1200);
+    const s1 = await state();
+    assert.equal(s1.playing, true);
+    assert.ok(s1.time > 0.6 && s1.time < 2.5, `播放時間 ${s1.time}`);
+    await page.keyboard.press('Space');
+    const s2 = await state();
+    assert.equal(s2.playing, false);
+    // 預覽不是全黑
+    const lit = await page.evaluate(() => {
+      const c = document.getElementById('previewCanvas');
+      const d = c.getContext('2d').getImageData(0, 0, c.width, c.height).data;
+      let sum = 0;
+      for (let i = 0; i < d.length; i += 400) sum += d[i] + d[i + 1] + d[i + 2];
+      return sum;
+    });
+    assert.ok(lit > 1000, '預覽畫面有東西');
+  });
+
+  await test('播完會停在結尾', async () => {
+    const dur = (await state()).project.clips.reduce((m, c) => Math.max(m, c.start + c.duration), 0);
+    await page.evaluate((d) => window.__oc.player.seek(d - 0.3), dur);
+    await page.click('#btnPlay');
+    await page.waitForTimeout(900);
+    const s = await state();
+    assert.equal(s.playing, false);
+    assert.ok(Math.abs(s.time - dur) < 0.05, `停在 ${s.time}`);
+  });
+
+  let videoId;
+  await test('點選片段：屬性面板顯示影片設定', async () => {
+    videoId = (await state()).project.clips.find(c => c.type === 'video').id;
+    const box = await clipBox(videoId);
+    await page.mouse.click(box.x + box.width / 2, box.y + box.height / 2);
+    assert.deepEqual((await state()).selection, [videoId]);
+    assert.equal(await page.textContent('#inspectorTitle'), '影片片段');
+    assert.ok(await page.locator('.inspector >> text=聲音與速度').count());
+  });
+
+  await test('屬性面板：輸入不透明度數值', async () => {
+    const num = page.locator('.field:has(label:text("不透明")) .num');
+    await num.fill('40');
+    await num.press('Enter');
+    const c = (await state()).project.clips.find(c => c.id === videoId);
+    assert.equal(c.opacity, 0.4);
+  });
+
+  await test('屬性面板：濾鏡預設「黑白」', async () => {
+    await page.click('.chip:text("黑白")');
+    const c = (await state()).project.clips.find(c => c.id === videoId);
+    assert.equal(c.filters.grayscale, 100);
+  });
+
+  await test('復原 / 重做', async () => {
+    await page.keyboard.press('Control+z');
+    let c = (await state()).project.clips.find(c => c.id === videoId);
+    assert.equal(c.filters.grayscale, 0);
+    await page.keyboard.press('Control+Shift+z');
+    c = (await state()).project.clips.find(c => c.id === videoId);
+    assert.equal(c.filters.grayscale, 100);
+  });
+
+  await test('拖曳右緣修剪（含吸附到播放頭）', async () => {
+    await page.evaluate(() => window.__oc.player.seek(3));
+    const box = await clipBox(videoId);
+    const pps = await page.evaluate(() => window.__oc.store.pxPerSec);
+    await page.mouse.move(box.x + box.width - 3, box.y + box.height / 2);
+    await page.mouse.down();
+    await page.mouse.move(box.x + box.width - 3 - pps * 0.97, box.y + box.height / 2, { steps: 8 });
+    await page.mouse.up();
+    const c = (await state()).project.clips.find(c => c.id === videoId);
+    assert.ok(Math.abs(c.duration - 3) < 1e-6, `修剪後長度 ${c.duration}（應吸附到 3）`);
+  });
+
+  await test('在播放頭分割 (S)', async () => {
+    await page.evaluate(() => window.__oc.player.seek(1.5));
+    await page.keyboard.press('s');
+    const s = await state();
+    const vids = s.project.clips.filter(c => c.type === 'video').sort((a, b) => a.start - b.start);
+    assert.equal(vids.length, 2);
+    assert.ok(Math.abs(vids[1].srcIn - 1.5) < 1e-6);
+  });
+
+  await test('拖曳移動片段到另一條影像軌', async () => {
+    const s = await state();
+    const right = s.project.clips.filter(c => c.type === 'video').sort((a, b) => b.start - a.start)[0];
+    const box = await clipBox(right.id);
+    const v2 = await page.locator('.tl-track').first().boundingBox();
+    await page.mouse.move(box.x + 20, box.y + box.height / 2);
+    await page.mouse.down();
+    await page.mouse.move(box.x + 60, v2.y + v2.height / 2, { steps: 10 });
+    await page.mouse.up();
+    const after = (await state()).project;
+    const moved = after.clips.find(c => c.id === right.id);
+    assert.equal(moved.trackId, after.tracks[0].id, '移到最上面的 V2');
+    assert.ok(moved.start > right.start, '往右移');
+  });
+
+  await test('波紋刪除 (Shift+Delete) 會補位', async () => {
+    const s = await state();
+    const v1 = [...s.project.tracks].reverse().find(t => t.kind === 'video');
+    const onV1 = s.project.clips.filter(c => c.trackId === v1.id).sort((a, b) => a.start - b.start);
+    assert.ok(onV1.length >= 2, `V1 上有 ${onV1.length} 個片段`);
+    const [first, second] = onV1;
+    await page.evaluate((id) => window.__oc.store.select([id]), first.id);
+    await page.keyboard.press('Shift+Delete');
+    const after = (await state()).project.clips.find(c => c.id === second.id);
+    assert.ok(Math.abs(after.start - (second.start - first.duration)) < 1e-6, `補位後開頭 ${after.start}`);
+    await page.keyboard.press('Control+z');
+    assert.ok((await state()).project.clips.some(c => c.id === first.id), '復原後回來');
+  });
+
+  await test('加入文字並編輯內容', async () => {
+    await page.click('.tab[data-tab="text"]');
+    await page.evaluate(() => window.__oc.player.seek(0.5));
+    await page.click('.text-preset[data-preset="title"]');
+    const s = await state();
+    const t = s.project.clips.find(c => c.type === 'text');
+    assert.ok(t);
+    assert.deepEqual(s.selection, [t.id]);
+    await page.fill('.inspector textarea', '你好，世界\n第二行');
+    const t2 = (await state()).project.clips.find(c => c.id === t.id);
+    assert.equal(t2.text.content, '你好，世界\n第二行');
+    await page.click('.tab[data-tab="media"]');
+  });
+
+  await test('在預覽畫面上拖曳文字（靠近中心會對齊）', async () => {
+    const t = (await state()).project.clips.find(c => c.type === 'text');
+    await page.evaluate(() => window.__oc.player.seek(1));
+    await page.waitForTimeout(150);
+    const frame = await page.locator('#frame').boundingBox();
+    const cx = frame.x + frame.width / 2, cy = frame.y + frame.height / 2;
+    await page.mouse.move(cx, cy);
+    await page.mouse.down();
+    await page.mouse.move(cx + 120, cy + 60, { steps: 6 });
+    await page.mouse.up();
+    let c = (await state()).project.clips.find(c => c.id === t.id);
+    assert.ok(c.transform.x > 100 && c.transform.y > 50, `移動到 ${c.transform.x}, ${c.transform.y}`);
+    // 拖回中心附近 → 吸附到 0
+    await page.mouse.move(cx + 120, cy + 60);
+    await page.mouse.down();
+    await page.mouse.move(cx + 2, cy + 1, { steps: 6 });
+    await page.mouse.up();
+    c = (await state()).project.clips.find(c => c.id === t.id);
+    assert.deepEqual([c.transform.x, c.transform.y], [0, 0]);
+  });
+
+  await test('專案會自動儲存，重新整理後還在（含素材檔）', async () => {
+    const before = await state();
+    await page.waitForTimeout(1200);
+    await page.reload();
+    await page.waitForFunction(() => window.__oc && window.__oc.store.project.clips.length > 0);
+    const after = await state();
+    assert.equal(after.project.clips.length, before.project.clips.length);
+    assert.equal(after.project.name, before.project.name);
+    const loaded = await page.evaluate(() => Object.keys(window.__oc.store.project.media).every(id => window.__oc.runtime.has(id)));
+    assert.equal(loaded, true, '素材檔都有載回來');
+  });
+
+  await test('匯出 MP4：長度、解析度、影音軌都正確', async () => {
+    const dur = (await state()).project.clips.reduce((m, c) => Math.max(m, c.start + c.duration), 0);
+    await page.click('#btnExport');
+    try {
+      await page.click('#exRes .seg-btn[data-v="480"]');
+      await page.click('#exFps .seg-btn[data-v="30"]');
+      await page.fill('#exName', 'e2e:export/test'); // 不合法字元要被換掉
+      const [download] = await Promise.all([
+        page.waitForEvent('download', { timeout: 120000 }),
+        page.click('.modal [data-go]'),
+      ]);
+      const out = path.join(tmp, 'out.mp4');
+      await download.saveAs(out);
+      assert.equal(download.suggestedFilename(), 'e2e export test.mp4');
+      await checkExport(out, dur);
+    } finally {
+      if (await page.locator('.modal').count()) await page.keyboard.press('Escape');
+    }
+  });
+
+  await test('匯出預設檔名用專案名稱（中文）', async () => {
+    const name = await page.evaluate(async () => {
+      const { sanitizeFilename } = await import('/assets/js/engine/exporter.js');
+      return sanitizeFilename(window.__oc.store.project.name);
+    });
+    assert.equal(name, '未命名專案');
+  });
+
+  async function checkExport(out, dur) {
+    const info = probe(out);
+    const v = info.streams.find(s => s.codec_type === 'video');
+    const a = info.streams.find(s => s.codec_type === 'audio');
+    assert.equal(v.codec_name, 'h264');
+    assert.deepEqual([v.width, v.height], [854, 480]);
+    assert.ok(a, '有音軌');
+    assert.ok(Math.abs(parseFloat(info.format.duration) - dur) < 0.25, `長度 ${info.format.duration} vs ${dur}`);
+    assert.ok(await page.isVisible('.export-done'));
+  }
+
+  await test('匯出的畫面內容正確（黑白濾鏡 + 前段是測試影像）', async () => {
+    const out = path.join(tmp, 'out.mp4');
+    const frame = path.join(tmp, 'frame.png');
+    ffmpeg(['-ss', '0.2', '-i', out, '-frames:v', '1', frame]);
+    const st = await stat(frame);
+    assert.ok(st.size > 2000, '有擷取到畫面');
+    // 用 ffmpeg 量平均飽和度：套了黑白濾鏡應該接近 0（原始測試影像是彩色的）
+    const stats = (file) => {
+      const r = spawnSync('ffmpeg', ['-hide_banner', '-i', file, '-vf', 'signalstats,metadata=print', '-f', 'null', '-'], { encoding: 'utf8' });
+      const num = (k) => parseFloat((r.stderr.match(new RegExp(`lavfi\\.signalstats\\.${k}=([\\d.]+)`)) || [])[1]);
+      return { sat: num('SATAVG'), y: num('YAVG') };
+    };
+    const original = path.join(tmp, 'orig.png');
+    ffmpeg(['-ss', '0.2', '-i', fx.video, '-frames:v', '1', original]);
+    const o = stats(original), e = stats(frame);
+    assert.ok(o.sat > 20, `原始影像飽和度 ${o.sat}`);
+    assert.ok(e.sat < 3, `匯出畫面飽和度 ${e.sat}（應為黑白）`);
+    assert.ok(e.y < o.y, `不透明度 40% 疊在黑底上應該比較暗：${e.y} vs ${o.y}`);
+  });
+
+  await test('只有圖片和文字（沒有聲音）也能匯出', async () => {
+    const res = await page.evaluate(async () => {
+      const { exportVideo } = await import('/assets/js/engine/exporter.js');
+      const P = await import('/assets/js/core/project.js');
+      let p = P.createProject({ aspect: '9:16' });
+      p = P.addClip(p, 'text', { duration: 1.5, text: { content: '只有文字' } }).project;
+      const r = await exportVideo({ project: p, runtime: window.__oc.runtime, settings: { short: 360, fps: 24 } });
+      const buf = new Uint8Array(await r.blob.arrayBuffer());
+      return { size: buf.length, ext: r.ext, head: Array.from(buf.slice(4, 8)) };
+    });
+    assert.equal(res.ext, 'mp4');
+    assert.ok(res.size > 1000);
+    assert.equal(String.fromCharCode(...res.head), 'ftyp');
+  });
+
+  await test('空的時間軸不能匯出', async () => {
+    const msg = await page.evaluate(async () => {
+      const { exportVideo } = await import('/assets/js/engine/exporter.js');
+      const P = await import('/assets/js/core/project.js');
+      try { await exportVideo({ project: P.createProject(), runtime: window.__oc.runtime }); return 'no error'; } catch (e) { return e.message; }
+    });
+    assert.match(msg, /空的/);
+  });
+
+  await test('取消匯出', async () => {
+    const msg = await page.evaluate(async () => {
+      const { exportVideo } = await import('/assets/js/engine/exporter.js');
+      const ctrl = new AbortController();
+      setTimeout(() => ctrl.abort(), 50);
+      try {
+        await exportVideo({ project: window.__oc.store.project, runtime: window.__oc.runtime, signal: ctrl.signal, settings: { short: 480 } });
+        return 'finished';
+      } catch (e) { return e.name; }
+    });
+    assert.equal(msg, 'AbortError');
+  });
+
+  await test('備援：MediaRecorder 即時錄製 WebM', async () => {
+    const res = await page.evaluate(async () => {
+      const { exportVideo } = await import('/assets/js/engine/exporter.js');
+      const P = await import('/assets/js/core/project.js');
+      const src = window.__oc.store.project;
+      const vid = Object.values(src.media).find(m => m.type === 'video');
+      let p = P.createProject();
+      p = P.addMedia(p, vid);
+      p = P.addClip(p, 'video', { mediaId: vid.id, duration: 1.5 }).project;
+      const r = await exportVideo({ project: p, runtime: window.__oc.runtime, settings: { short: 360, forceRecorder: true } });
+      return { size: r.blob.size, ext: r.ext, method: r.method, bytes: Array.from(new Uint8Array(await r.blob.slice(0, 4).arrayBuffer())) };
+    });
+    assert.equal(res.method, 'recorder');
+    assert.equal(res.ext, 'webm');
+    assert.ok(res.size > 1000, `大小 ${res.size}`);
+    assert.deepEqual(res.bytes, [0x1a, 0x45, 0xdf, 0xa3], 'EBML 開頭');
+  });
+
+  await test('瀏覽器不能編碼音訊時改用即時錄製，不會輸出沒有聲音的影片', async () => {
+    const res = await page.evaluate(async () => {
+      const { exportVideo, detectExportSupport } = await import('/assets/js/engine/exporter.js');
+      const P = await import('/assets/js/core/project.js');
+      const tone = Object.values(window.__oc.store.project.media).find(m => m.type === 'audio');
+      let p = P.createProject();
+      p = P.addMedia(p, tone);
+      p = P.addClip(p, 'audio', { mediaId: tone.id, duration: 1.2 }).project;
+      p = P.addClip(p, 'text', { duration: 1.2 }).project;
+      const saved = window.AudioEncoder;
+      window.AudioEncoder = undefined;
+      try {
+        const support = await detectExportSupport(p, { short: 360 });
+        const r = await exportVideo({ project: p, runtime: window.__oc.runtime, settings: { short: 360 } });
+        return { support: support.method, method: r.method, buf: Array.from(new Uint8Array(await r.blob.arrayBuffer())) };
+      } finally {
+        window.AudioEncoder = saved;
+      }
+    });
+    assert.equal(res.support, 'recorder');
+    assert.equal(res.method, 'recorder');
+    const out = path.join(tmp, 'no-aenc.webm');
+    await import('node:fs').then(fs => fs.writeFileSync(out, Buffer.from(res.buf)));
+    assert.ok(probe(out).streams.some(s => s.codec_type === 'audio'), '要有音軌');
+  });
+
+  await test('手機直拍（有旋轉標記）的影片：預覽與匯出方向一致', async () => {
+    await page.click('#btnNew');
+    await page.click('.modal .danger-btn');
+    await waitFor(async () => (await state()).project.clips.length === 0, 5000, '清空');
+    await page.setInputFiles('#fileInput', [fx.rotated]);
+    await waitFor(async () => (await state()).project.clips.length === 1, 10000, '匯入');
+    assert.equal((await state()).project.aspect, '9:16', '顯示尺寸是直的');
+    await page.evaluate(() => window.__oc.player.seek(0.5));
+    await page.waitForTimeout(500);
+    // 預覽（<video> 會自己處理旋轉）上半與下半的顏色
+    const preview = await page.evaluate(() => {
+      const c = document.getElementById('previewCanvas'), g = c.getContext('2d');
+      const px = (fy) => Array.from(g.getImageData(Math.floor(c.width / 2), Math.floor(c.height * fy), 1, 1).data.slice(0, 3));
+      return { top: px(0.25), bottom: px(0.75) };
+    });
+    const res = await page.evaluate(async () => {
+      const { exportVideo } = await import('/assets/js/engine/exporter.js');
+      const r = await exportVideo({ project: window.__oc.store.project, runtime: window.__oc.runtime, settings: { short: 360 } });
+      return Array.from(new Uint8Array(await r.blob.arrayBuffer()));
+    });
+    const out = path.join(tmp, 'rot-out.mp4');
+    await import('node:fs').then(fs => fs.writeFileSync(out, Buffer.from(res)));
+    const v = probe(out).streams.find(s => s.codec_type === 'video');
+    assert.deepEqual([v.width, v.height], [360, 640]);
+    const raw = execFileSync('ffmpeg', ['-v', 'error', '-ss', '0.5', '-i', out, '-frames:v', '1', '-f', 'rawvideo', '-pix_fmt', 'rgb24', '-']);
+    const at = (fy) => { const i = (Math.floor(640 * fy) * 360 + 180) * 3; return [raw[i], raw[i + 1], raw[i + 2]]; };
+    const dominant = (rgb) => (rgb[0] > rgb[2] + 60 ? 'red' : rgb[2] > rgb[0] + 60 ? 'blue' : 'other');
+    const exported = { top: dominant(at(0.25)), bottom: dominant(at(0.75)) };
+    const shown = { top: dominant(preview.top), bottom: dominant(preview.bottom) };
+    assert.notEqual(shown.top, shown.bottom, `預覽應該上下不同色：${JSON.stringify(preview)}`);
+    assert.deepEqual(exported, shown, '匯出畫面的方向要跟預覽一樣');
+  });
+
+  await test('直式影片匯入到空專案會切換成 9:16', async () => {
+    await page.click('#btnNew');
+    await page.click('.modal .danger-btn');
+    await waitFor(async () => (await state()).project.clips.length === 0, 5000, '清空');
+    await page.setInputFiles('#fileInput', [fx.portrait]);
+    await waitFor(async () => (await state()).project.clips.length === 1, 10000, '匯入直式');
+    assert.equal((await state()).project.aspect, '9:16');
+  });
+
+  await test('沒有聲音的影片能匯入，並標記為沒有音軌', async () => {
+    await page.setInputFiles('#fileInput', [fx.silent]);
+    await waitFor(async () => Object.keys((await state()).project.media).length === 2, 10000, '匯入');
+    const id = Object.values((await state()).project.media).find(m => m.name === 'silent.webm').id;
+    await page.evaluate((id) => window.__oc.runtime.decodeAudio(id), id);
+    const hasAudio = await page.evaluate((id) => window.__oc.runtime.get(id).info.hasAudio, id);
+    assert.equal(hasAudio, false);
+  });
+
+  await test('素材卡片上的 ＋ 加到播放頭', async () => {
+    const before = (await state()).project.clips.length;
+    const card = page.locator('.media-card:not(.loading)').first();
+    await card.hover();
+    await card.locator('[data-act="add"]').click();
+    assert.equal((await state()).project.clips.length, before + 1);
+  });
+
+  await test('快捷鍵說明', async () => {
+    await page.keyboard.press('?');
+    assert.ok(await page.isVisible('.modal >> text=鍵盤快捷鍵'));
+    await page.keyboard.press('Escape');
+    assert.equal(await page.locator('.modal').count(), 0);
+  });
+
+  await test('只出現預期中的錯誤通知', async () => {
+    const toasts = await page.evaluate(() => JSON.parse(sessionStorage.getItem('__errorToasts') || '[]'));
+    console.log(`      錯誤通知：${JSON.stringify(toasts)}`);
+    assert.equal(toasts.length, 2, '匯入兩個壞檔應該各有一則');
+    assert.match(toasts[0] + toasts[1], /不支援的檔案類型：notes\.txt/);
+    assert.match(toasts[0] + toasts[1], /broken\.mp4：檔案損毀，或瀏覽器不支援這種格式/);
+  });
+
+  await test('整個流程沒有 JS 錯誤', async () => {
+    const real = errors.filter(e => !/Failed to load resource/.test(e));
+    assert.deepEqual(real, []);
+  });
+
+  console.log('\n首頁與手機版');
+  await test('首頁載入、連結到編輯器', async () => {
+    const p2 = await context.newPage();
+    const errs = [];
+    p2.on('pageerror', e => errs.push(e.message));
+    await p2.goto(`${BASE}/index.html`);
+    const href = await p2.getAttribute('a.cta-primary', 'href');
+    assert.match(href, /editor\.html/);
+    assert.deepEqual(errs, []);
+    await p2.close();
+  });
+
+  for (const [name, url] of [['首頁', 'index.html'], ['編輯器', 'editor.html']]) {
+    await test(`${name}在手機寬度沒有橫向捲軸`, async () => {
+      const p3 = await browser.newPage({ viewport: { width: 375, height: 760 } });
+      await p3.route(/fonts\.(googleapis|gstatic)\.com/, r => r.fulfill({ body: '', contentType: 'text/css' }));
+      await p3.goto(`${BASE}/${url}`);
+      await p3.waitForTimeout(600);
+      const over = await p3.evaluate(() => document.documentElement.scrollWidth - window.innerWidth);
+      assert.ok(over <= 1, `超出 ${over}px`);
+      await p3.close();
+    });
+  }
+} finally {
+  await browser.close();
+  server.close();
+  await rm(tmp, { recursive: true, force: true });
+}
+
+console.log(`\n${failures ? '❌' : '✅'} ${passed} 通過，${failures} 失敗`);
+process.exit(failures ? 1 : 0);

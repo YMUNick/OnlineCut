@@ -1,0 +1,535 @@
+// 時間軸：繪製軌道與片段，處理拖曳移動、修剪、吸附、播放頭拖曳、縮放與素材拖放
+
+import {
+  clipEnd, getClip, getTrack, canHost, moveClip, trimClip, snapPoints, snapClipStart, snapTime,
+  getDuration, sourceTime, TRACK_KIND_FOR_TYPE, updateTrack, removeTrack,
+} from '../core/project.js';
+import { rulerStep, formatRulerLabel, clamp } from '../core/time.js';
+import { icon } from './icons.js';
+import { escapeHtml } from './dialogs.js';
+
+export const PAD = 16;             // 時間 0 左邊的留白（px）
+const SNAP_PX = 8;                 // 吸附距離（px）
+const MIN_PPS = 2, MAX_PPS = 600;  // 每秒像素範圍
+const TYPE_ICON = { video: 'film', image: 'image', text: 'type', audio: 'music' };
+
+// 從素材庫拖進時間軸時，dragover 讀不到 dataTransfer 的內容，所以另外記住
+export const dragPayload = { media: null };
+
+export const ppsToSlider = (pps) => Math.round(100 * Math.log(pps / MIN_PPS) / Math.log(MAX_PPS / MIN_PPS));
+export const sliderToPps = (v) => MIN_PPS * Math.pow(MAX_PPS / MIN_PPS, v / 100);
+
+export class Timeline {
+  constructor({ store, runtime, els, getTime, onSeek, onScrubStart, onDropMedia }) {
+    this.store = store;
+    this.runtime = runtime;
+    this.els = els;
+    this.getTime = getTime;
+    this.onSeek = onSeek;
+    this.onScrubStart = onScrubStart || (() => {});
+    this.onDropMedia = onDropMedia;
+    this.rows = new Map();
+    this.clipEls = new Map();
+    this.drag = null;
+    this.bgQueued = false;
+    this.trackH = 64;
+
+    this.bindScroll();
+    this.bindRuler();
+    this.bindTracks();
+    this.bindDrop();
+    runtime.onChange(() => this.queueBackgrounds());
+    new ResizeObserver(() => { this.renderRuler(); this.layoutContent(); this.queueBackgrounds(); }).observe(els.scroll);
+  }
+
+  get pps() { return this.store.pxPerSec; }
+  timeToX(t) { return PAD + t * this.pps; }
+  xToTime(x) { return (x - PAD) / this.pps; }
+
+  /** 滑鼠在捲動區內的 x → 時間 */
+  clientXToTime(clientX) {
+    const r = this.els.scroll.getBoundingClientRect();
+    return this.xToTime(clientX - r.left + this.els.scroll.scrollLeft);
+  }
+
+  // ============================================================
+  // 繪製
+  // ============================================================
+  render() {
+    this.trackH = parseFloat(getComputedStyle(this.els.scroll).getPropertyValue('--track-h')) || 64;
+    this.renderHeads();
+    this.renderTracks();
+    this.layoutContent();
+    this.renderRuler();
+    this.updatePlayhead(this.getTime());
+    this.queueBackgrounds();
+  }
+
+  layoutContent() {
+    const p = this.store.project;
+    const viewW = this.els.scroll.clientWidth;
+    const w = Math.max(viewW, this.timeToX(getDuration(p) + Math.max(30, viewW / this.pps * 0.5)));
+    this.els.content.style.width = `${w}px`;
+    const step = rulerStep(this.pps);
+    this.els.tracks.style.setProperty('--grid', `${step * this.pps}px`);
+  }
+
+  renderHeads() {
+    const p = this.store.project;
+    const list = this.els.headList;
+    list.innerHTML = '';
+    const counts = { video: p.tracks.filter(t => t.kind === 'video').length, audio: p.tracks.filter(t => t.kind === 'audio').length };
+    for (const t of p.tracks) {
+      const row = document.createElement('div');
+      row.className = 'tl-head';
+      const vis = t.kind === 'video'
+        ? `<button class="icon-btn ${t.hidden ? 'on' : ''}" data-act="hidden" title="${t.hidden ? '顯示軌道' : '隱藏軌道'}" aria-pressed="${t.hidden}">${icon(t.hidden ? 'eyeOff' : 'eye')}</button>`
+        : '';
+      row.innerHTML = `
+        <span class="kind ${t.kind}"></span><span class="name">${escapeHtml(t.name)}</span>
+        ${vis}
+        <button class="icon-btn ${t.muted ? 'on' : ''}" data-act="muted" title="${t.muted ? '取消靜音' : '靜音'}" aria-pressed="${t.muted}">${icon(t.muted ? 'volumeOff' : 'volume')}</button>
+        <button class="icon-btn ${t.locked ? 'on' : ''}" data-act="locked" title="${t.locked ? '解鎖' : '鎖定'}" aria-pressed="${t.locked}">${icon(t.locked ? 'lock' : 'unlock')}</button>
+        <span class="spacer"></span>
+        ${counts[t.kind] > 1 ? `<button class="icon-btn" data-act="remove" title="刪除軌道">${icon('close', 'icon-sm')}</button>` : ''}`;
+      row.addEventListener('click', (e) => {
+        const act = e.target.closest('[data-act]')?.dataset.act;
+        if (!act) return;
+        const proj = this.store.project;
+        if (act === 'remove') {
+          const n = proj.clips.filter(c => c.trackId === t.id).length;
+          this.store.commit(removeTrack(proj, t.id));
+          if (n) this.emitToast?.(`已刪除軌道 ${t.name} 與 ${n} 個片段`, { undo: true });
+        } else {
+          this.store.commit(updateTrack(proj, t.id, { [act]: !t[act] }));
+        }
+      });
+      list.appendChild(row);
+    }
+    list.scrollTop = this.els.scroll.scrollTop;
+  }
+
+  renderTracks() {
+    const p = this.store.project;
+    const sel = new Set(this.store.selection);
+    const seenRows = new Set();
+    p.tracks.forEach((t) => {
+      let row = this.rows.get(t.id);
+      if (!row) {
+        row = document.createElement('div');
+        row.className = 'tl-track';
+        row.dataset.trackId = t.id;
+        this.rows.set(t.id, row);
+      }
+      row.dataset.kind = t.kind;
+      row.classList.toggle('locked', t.locked);
+      row.classList.toggle('hidden-track', t.hidden);
+      this.els.tracks.appendChild(row); // appendChild 會照順序搬動
+      seenRows.add(t.id);
+    });
+    for (const [id, row] of this.rows) if (!seenRows.has(id)) { row.remove(); this.rows.delete(id); }
+
+    const seenClips = new Set();
+    for (const c of p.clips) {
+      let el = this.clipEls.get(c.id);
+      if (!el) {
+        el = document.createElement('div');
+        el.dataset.clipId = c.id;
+        el.innerHTML = `<canvas class="clip-bg"></canvas><div class="clip-fade in"></div><div class="clip-fade out"></div><div class="clip-label"></div><div class="clip-handle l" data-edge="start"></div><div class="clip-handle r" data-edge="end"></div>`;
+        this.clipEls.set(c.id, el);
+      }
+      el.className = `clip ${c.type}${sel.has(c.id) ? ' selected' : ''}`;
+      el.style.left = `${this.timeToX(c.start)}px`;
+      el.style.width = `${Math.max(2, c.duration * this.pps)}px`;
+      el.style.top = '';
+      el.querySelector('.clip-fade.in').style.width = `${c.fadeIn * this.pps}px`;
+      el.querySelector('.clip-fade.out').style.width = `${c.fadeOut * this.pps}px`;
+      const label = c.type === 'text' ? (c.text.content.split('\n')[0] || '文字') : (c.name || p.media[c.mediaId]?.name || c.type);
+      const speed = c.speed !== 1 ? `<span class="speed">${c.speed}×</span>` : '';
+      const muted = c.muted ? icon('volumeOff') : '';
+      el.querySelector('.clip-label').innerHTML = `${icon(TYPE_ICON[c.type])}<span>${escapeHtml(label)}</span>${speed}${muted}`;
+      el.title = label;
+      const row = this.rows.get(c.trackId);
+      if (row && el.parentNode !== row) row.appendChild(el);
+      seenClips.add(c.id);
+    }
+    for (const [id, el] of this.clipEls) if (!seenClips.has(id)) { el.remove(); this.clipEls.delete(id); }
+
+    // 空狀態提示
+    this.els.tracks.querySelectorAll('.tl-empty').forEach(n => n.remove());
+    if (!p.clips.length) {
+      const first = this.rows.get([...p.tracks].reverse().find(t => t.kind === 'video')?.id);
+      if (first) {
+        const hint = document.createElement('div');
+        hint.className = 'tl-empty';
+        hint.innerHTML = `${icon('upload', 'icon-sm')}把素材拖到這裡，或在素材卡片上按 ＋`;
+        first.appendChild(hint);
+      }
+    }
+  }
+
+  renderRuler() {
+    const cv = this.els.ruler;
+    const dpr = window.devicePixelRatio || 1;
+    const w = this.els.scroll.clientWidth;
+    const h = 28;
+    if (cv.width !== Math.round(w * dpr) || cv.height !== Math.round(h * dpr)) {
+      cv.width = Math.round(w * dpr);
+      cv.height = Math.round(h * dpr);
+      cv.style.width = `${w}px`;
+    }
+    cv.style.left = '0px';
+    cv.style.transform = `translateX(${this.els.scroll.scrollLeft}px)`;
+    const ctx = cv.getContext('2d');
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    ctx.clearRect(0, 0, w, h);
+    const sl = this.els.scroll.scrollLeft;
+    const step = rulerStep(this.pps);
+    const minor = step / (step >= 1 ? 5 : 2);
+    const t0 = Math.max(0, Math.floor(this.xToTime(sl) / minor) * minor);
+    const t1 = this.xToTime(sl + w);
+    ctx.font = '10.5px ui-monospace, Menlo, monospace';
+    ctx.textBaseline = 'top';
+    for (let t = t0; t <= t1 + minor; t += minor) {
+      const x = Math.round(this.timeToX(t) - sl) + 0.5;
+      const major = Math.abs(t / step - Math.round(t / step)) < 1e-6;
+      ctx.strokeStyle = major ? 'rgba(255,255,255,.32)' : 'rgba(255,255,255,.12)';
+      ctx.beginPath();
+      ctx.moveTo(x, major ? h - 12 : h - 6);
+      ctx.lineTo(x, h);
+      ctx.stroke();
+      if (major) {
+        ctx.fillStyle = 'rgba(233,235,238,.62)';
+        ctx.fillText(formatRulerLabel(Math.round(t * 1000) / 1000, step), x + 4, 5);
+      }
+    }
+  }
+
+  updatePlayhead(t) {
+    this.els.playhead.style.transform = `translateX(${this.timeToX(t)}px)`;
+  }
+
+  /** 播放時讓播放頭保持在可見範圍 */
+  follow(t) {
+    const x = this.timeToX(t);
+    const s = this.els.scroll;
+    if (x > s.scrollLeft + s.clientWidth - 40 || x < s.scrollLeft) s.scrollLeft = Math.max(0, x - s.clientWidth * 0.2);
+  }
+
+  // ---------- 片段背景（縮圖膠卷 / 波形），只畫看得到的範圍 ----------
+  queueBackgrounds() {
+    if (this.bgQueued) return;
+    this.bgQueued = true;
+    requestAnimationFrame(() => { this.bgQueued = false; this.drawBackgrounds(); });
+  }
+
+  drawBackgrounds() {
+    const p = this.store.project;
+    const s = this.els.scroll;
+    const viewL = s.scrollLeft, viewR = viewL + s.clientWidth;
+    const dpr = window.devicePixelRatio || 1;
+    for (const c of p.clips) {
+      const el = this.clipEls.get(c.id);
+      if (!el) continue;
+      const cv = el.querySelector('canvas.clip-bg');
+      const left = this.timeToX(c.start), width = c.duration * this.pps;
+      const visL = Math.max(left, viewL), visR = Math.min(left + width, viewR);
+      if (visR <= visL || c.type === 'text') { cv.style.display = 'none'; continue; }
+      const w = Math.ceil(visR - visL), h = el.clientHeight || this.trackH - 8;
+      cv.style.display = '';
+      cv.style.left = `${visL - left}px`;
+      cv.style.width = `${w}px`;
+      cv.style.right = 'auto';
+      if (cv.width !== Math.round(w * dpr) || cv.height !== Math.round(h * dpr)) {
+        cv.width = Math.round(w * dpr);
+        cv.height = Math.round(h * dpr);
+      }
+      const ctx = cv.getContext('2d');
+      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+      ctx.clearRect(0, 0, w, h);
+      const item = this.runtime.get(c.mediaId);
+      if (!item) continue;
+      const tAt = (x) => this.xToTime(visL + x);
+      if (c.type === 'video' || c.type === 'image') {
+        const stripH = c.type === 'video' && item.peaks ? h * 0.72 : h;
+        this.drawFilmstrip(ctx, c, item, w, stripH, tAt);
+        if (c.type === 'video' && item.peaks) this.drawWave(ctx, c, item, w, stripH, h - stripH, tAt, 'rgba(255,255,255,.55)', true);
+      } else if (c.type === 'audio' && item.peaks) {
+        this.drawWave(ctx, c, item, w, 16, h - 18, tAt, 'rgba(255,255,255,.7)', false);
+      }
+    }
+  }
+
+  drawFilmstrip(ctx, clip, item, w, h, tAt) {
+    const thumbs = item.thumbs;
+    if (!thumbs?.length) return;
+    const tw = Math.max(16, h * (thumbs[0].canvas.width / thumbs[0].canvas.height));
+    ctx.save();
+    ctx.globalAlpha = 0.9;
+    // 讓縮圖格子對齊片段開頭，捲動時不會跳動
+    const clipLeftX = this.timeToX(clip.start) - this.timeToX(tAt(0));
+    const startIdx = Math.floor(-clipLeftX / tw);
+    for (let i = startIdx; clipLeftX + i * tw < w; i++) {
+      const x = clipLeftX + i * tw;
+      let thumb = thumbs[0];
+      if (clip.type === 'video' && thumbs.length > 1) {
+        const st = sourceTime(clip, tAt(x + tw / 2));
+        thumb = thumbs.reduce((best, th) => (Math.abs(th.t - st) < Math.abs(best.t - st) ? th : best), thumbs[0]);
+      }
+      ctx.drawImage(thumb.canvas, x, 0, tw, h);
+    }
+    ctx.restore();
+    ctx.fillStyle = 'rgba(0,0,0,.18)';
+    ctx.fillRect(0, 0, w, 18);
+  }
+
+  drawWave(ctx, clip, item, w, top, h, tAt, color, mirrorBottom) {
+    const { peaks, peaksPerSec } = item;
+    if (h < 4) return;
+    ctx.fillStyle = mirrorBottom ? 'rgba(0,0,0,.35)' : 'transparent';
+    if (mirrorBottom) ctx.fillRect(0, top, w, h);
+    ctx.fillStyle = color;
+    const gain = Math.min(2, clip.muted ? 0 : clip.volume) || 0.05;
+    const mid = mirrorBottom ? top + h : top + h / 2;
+    for (let x = 0; x < w; x += 2) {
+      const s0 = sourceTime(clip, tAt(x)), s1 = sourceTime(clip, tAt(x + 2));
+      const i0 = Math.max(0, Math.floor(s0 * peaksPerSec)), i1 = Math.min(peaks.length, Math.max(i0 + 1, Math.ceil(s1 * peaksPerSec)));
+      let v = 0;
+      for (let i = i0; i < i1; i++) if (peaks[i] > v) v = peaks[i];
+      const bh = Math.max(1, Math.min(1, v * gain) * (mirrorBottom ? h - 2 : h / 2));
+      if (mirrorBottom) ctx.fillRect(x, mid - bh, 1.4, bh);
+      else ctx.fillRect(x, mid - bh, 1.4, bh * 2);
+    }
+  }
+
+  // ============================================================
+  // 縮放
+  // ============================================================
+  setZoom(pps, anchorTime = null) {
+    pps = clamp(pps, MIN_PPS, MAX_PPS);
+    const s = this.els.scroll;
+    const anchor = anchorTime ?? this.getTime();
+    const anchorScreen = this.timeToX(anchor) - s.scrollLeft;
+    this.store.setView({ pxPerSec: pps });
+    this.render();
+    s.scrollLeft = Math.max(0, this.timeToX(anchor) - anchorScreen);
+    this.renderRuler();
+    this.queueBackgrounds();
+  }
+
+  zoomBy(f, anchorTime) { this.setZoom(this.pps * f, anchorTime); }
+
+  fit() {
+    const d = getDuration(this.store.project) || 30;
+    const w = this.els.scroll.clientWidth - PAD - 40;
+    this.setZoom(w / d, 0);
+    this.els.scroll.scrollLeft = 0;
+  }
+
+  // ============================================================
+  // 互動
+  // ============================================================
+  bindScroll() {
+    const s = this.els.scroll;
+    s.addEventListener('scroll', () => {
+      this.els.headList.scrollTop = s.scrollTop;
+      this.renderRuler();
+      this.queueBackgrounds();
+    }, { passive: true });
+    s.addEventListener('wheel', (e) => {
+      if (e.ctrlKey || e.metaKey) {
+        e.preventDefault();
+        this.zoomBy(Math.exp(-e.deltaY * 0.01), this.clientXToTime(e.clientX));
+      }
+    }, { passive: false });
+    this.els.headList.addEventListener('wheel', (e) => { s.scrollTop += e.deltaY; }, { passive: true });
+  }
+
+  bindRuler() {
+    const startScrub = (e) => {
+      e.preventDefault();
+      this.onScrubStart();
+      const move = (ev) => this.onSeek(Math.max(0, this.clientXToTime(ev.clientX)));
+      move(e);
+      const up = () => { window.removeEventListener('pointermove', move); window.removeEventListener('pointerup', up); };
+      window.addEventListener('pointermove', move);
+      window.addEventListener('pointerup', up);
+    };
+    this.els.ruler.addEventListener('pointerdown', startScrub);
+    this.els.playhead.querySelector('.tl-playhead-cap').addEventListener('pointerdown', startScrub);
+  }
+
+  trackAtClientY(clientY) {
+    for (const [id, row] of this.rows) {
+      const r = row.getBoundingClientRect();
+      if (clientY >= r.top && clientY < r.bottom) return getTrack(this.store.project, id);
+    }
+    return null;
+  }
+
+  bindTracks() {
+    this.els.tracks.addEventListener('pointerdown', (e) => {
+      if (e.button !== 0) return;
+      const clipEl = e.target.closest('.clip');
+      if (!clipEl) {
+        // 點空白處：取消選取並移動播放頭
+        this.store.select([]);
+        this.onScrubStart();
+        this.onSeek(Math.max(0, this.clientXToTime(e.clientX)));
+        return;
+      }
+      e.preventDefault();
+      const id = clipEl.dataset.clipId;
+      const clip = getClip(this.store.project, id);
+      if (!clip) return;
+      const additive = e.shiftKey || e.metaKey || e.ctrlKey;
+      if (additive) { this.store.select(id, { add: true }); return; }
+      if (!this.store.selection.includes(id)) this.store.select(id);
+      const track = getTrack(this.store.project, clip.trackId);
+      if (track?.locked) return;
+      const edge = e.target.closest('.clip-handle')?.dataset.edge;
+      if (edge) this.beginTrim(e, clip, edge);
+      else this.beginMove(e, clip);
+    });
+  }
+
+  snapPointsFor(excludeIds) {
+    return snapPoints(this.store.project, { excludeIds, playhead: this.getTime() });
+  }
+
+  showSnap(t) {
+    const line = this.els.snapline;
+    if (t == null) { line.hidden = true; return; }
+    line.hidden = false;
+    line.style.left = `${this.timeToX(t)}px`;
+  }
+
+  beginTrim(e, clip, edge) {
+    const session = Math.random().toString(36).slice(2);
+    const origT = edge === 'start' ? clip.start : clipEnd(clip);
+    const x0 = e.clientX;
+    const points = this.snapPointsFor([clip.id]);
+    const move = (ev) => {
+      let t = origT + (ev.clientX - x0) / this.pps;
+      let snapped = null;
+      if (this.store.snap && !ev.altKey) {
+        const r = snapTime(t, points, SNAP_PX / this.pps);
+        if (r.snapped) { t = r.time; snapped = r.point; }
+      }
+      this.showSnap(snapped);
+      const base = this.drag.base;
+      this.store.commit(trimClip(base, clip.id, edge, t), { key: `trim-${session}` });
+    };
+    const up = () => {
+      window.removeEventListener('pointermove', move);
+      window.removeEventListener('pointerup', up);
+      this.showSnap(null);
+      this.drag = null;
+    };
+    // 每次都從開始拖曳時的狀態計算，避免累積誤差
+    this.drag = { type: 'trim', base: this.store.project };
+    window.addEventListener('pointermove', move);
+    window.addEventListener('pointerup', up);
+  }
+
+  beginMove(e, clip) {
+    const p = this.store.project;
+    const ids = this.store.selection.filter(id => {
+      const c = getClip(p, id);
+      return c && !getTrack(p, c.trackId)?.locked;
+    });
+    const group = ids.map(id => getClip(p, id));
+    const single = group.length === 1;
+    const x0 = e.clientX;
+    const minStart = Math.min(...group.map(c => c.start));
+    const points = this.snapPointsFor(ids);
+    let moved = false, delta = 0, targetTrack = null;
+
+    const move = (ev) => {
+      if (!moved && Math.abs(ev.clientX - x0) < 3 && Math.abs(ev.clientY - e.clientY) < 3) return;
+      moved = true;
+      delta = (ev.clientX - x0) / this.pps;
+      delta = Math.max(delta, -minStart);
+      let snapped = null;
+      if (this.store.snap && !ev.altKey) {
+        // 用拖曳的那個片段來吸附
+        const r = snapClipStart(clip.start + delta, clip.duration, points, SNAP_PX / this.pps);
+        if (r.point != null) { delta = Math.max(r.start - clip.start, -minStart); snapped = r.point; }
+      }
+      this.showSnap(snapped);
+      targetTrack = null;
+      if (single) {
+        const tr = this.trackAtClientY(ev.clientY);
+        if (tr && canHost(tr, clip.type) && !tr.locked) targetTrack = tr;
+      }
+      for (const c of group) {
+        const el = this.clipEls.get(c.id);
+        el.classList.add('ghost');
+        el.style.left = `${this.timeToX(c.start + delta)}px`;
+        if (single && targetTrack && targetTrack.id !== c.trackId) {
+          const from = this.rows.get(c.trackId).getBoundingClientRect().top;
+          const to = this.rows.get(targetTrack.id).getBoundingClientRect().top;
+          el.style.top = `${to - from + 4}px`;
+        } else {
+          el.style.top = '';
+        }
+      }
+    };
+    const up = () => {
+      window.removeEventListener('pointermove', move);
+      window.removeEventListener('pointerup', up);
+      this.showSnap(null);
+      this.drag = null;
+      for (const c of group) this.clipEls.get(c.id)?.classList.remove('ghost');
+      if (!moved) return;
+      let next = this.store.project;
+      const ordered = [...group].sort((a, b) => (delta > 0 ? b.start - a.start : a.start - b.start));
+      for (const c of ordered) {
+        next = moveClip(next, c.id, { start: c.start + delta, trackId: single && targetTrack ? targetTrack.id : c.trackId });
+      }
+      if (!this.store.commit(next)) this.render();
+    };
+    this.drag = { type: 'move' };
+    window.addEventListener('pointermove', move);
+    window.addEventListener('pointerup', up);
+  }
+
+  bindDrop() {
+    const tracks = this.els.tracks;
+    const clear = () => this.rows.forEach(r => r.classList.remove('drop-ok'));
+    const scroll = this.els.scroll;
+    scroll.addEventListener('dragover', (e) => {
+      if (!dragPayload.media) return;
+      e.preventDefault();
+      e.dataTransfer.dropEffect = 'copy';
+      clear();
+      const tr = this.trackAtClientY(e.clientY);
+      if (tr && canHost(tr, dragPayload.media.type) && !tr.locked) this.rows.get(tr.id).classList.add('drop-ok');
+      const points = this.snapPointsFor([]);
+      const t = Math.max(0, this.clientXToTime(e.clientX));
+      const r = this.store.snap ? snapTime(t, points, SNAP_PX / this.pps) : { snapped: false };
+      this.showSnap(r.snapped ? r.point : null);
+    });
+    scroll.addEventListener('dragleave', (e) => {
+      if (!scroll.contains(e.relatedTarget)) { clear(); this.showSnap(null); }
+    });
+    scroll.addEventListener('drop', (e) => {
+      if (!dragPayload.media) return;
+      e.preventDefault();
+      e.stopPropagation();
+      clear();
+      this.showSnap(null);
+      const tr = this.trackAtClientY(e.clientY);
+      let t = Math.max(0, this.clientXToTime(e.clientX));
+      if (this.store.snap) {
+        const r = snapTime(t, this.snapPointsFor([]), SNAP_PX / this.pps);
+        if (r.snapped) t = r.time;
+      }
+      const media = dragPayload.media;
+      dragPayload.media = null;
+      const kind = TRACK_KIND_FOR_TYPE[media.type];
+      this.onDropMedia(media.id, tr && tr.kind === kind ? tr.id : null, t);
+    });
+    tracks.addEventListener('dragend', () => { clear(); this.showSnap(null); });
+  }
+}
