@@ -6,8 +6,8 @@ import {
 } from './core/project.js';
 import { formatTimecode, clamp } from './core/time.js';
 import { Store } from './state.js';
-import { store as db } from './media/store.js';
-import { MediaRuntime, probe } from './media/library.js';
+import { store as db, storageSettings } from './media/store.js';
+import { MediaRuntime, probe, VIDEO_EXTS, AUDIO_EXTS, IMAGE_EXTS } from './media/library.js';
 import { Player } from './engine/player.js';
 import { Timeline, ppsToSlider, sliderToPps } from './ui/timeline.js';
 import { MediaPanel } from './ui/media-panel.js';
@@ -77,6 +77,7 @@ const mediaPanel = new MediaPanel({
     textPresets: $('textPresets'),
   },
   onImport: (files) => importFiles(files),
+  onPick: () => pickMediaFiles(),
   onAdd: (id) => addMediaToTimeline(id, { start: player.time }),
   onRemove: (id) => removeMediaItem(id),
   onAddText: (preset) => addText(preset),
@@ -93,7 +94,13 @@ const inspector = new Inspector({
   },
 });
 
-window.__oc = { store, player, runtime, timeline }; // 給除錯與自動化測試用
+// 給除錯與自動化測試用
+window.__oc = {
+  store, player, runtime, timeline,
+  importEntries: (e) => importEntries(e),
+  /** 模擬關掉再開啟：放掉所有素材，從瀏覽器儲存重新載入 */
+  simulateRestart: async () => { player.destroy(); runtime.releaseAll(); pendingHandles.length = 0; await loadSaved(); },
+};
 
 // ============================================================
 // 狀態變動 → 畫面
@@ -161,77 +168,193 @@ async function saveNow() {
   }
 }
 
+// ------------------------------------------------------------
+// 素材的保存（讓重新整理後還在）
+// 小檔案：在背景複製一份到瀏覽器。大檔案：不複製（不多佔硬碟），
+// 有檔案代號（Chrome / Edge）就記住位置，下次請使用者允許讀取；沒有就需要重新匯入。
+// ------------------------------------------------------------
+const isLarge = (file) => file.size > storageSettings.copyLimitBytes;
+
+/** 回傳 'copied' | 'handle' | 'none' */
+async function persistMedia(id, file, handle) {
+  if (!isLarge(file)) {
+    busy.start();
+    db.saveFile(id, file)
+      .catch((e) => {
+        console.warn(e);
+        toast(`「${file.name}」無法存到瀏覽器（空間可能不足）；重新整理後需要再匯入一次`, { type: 'error', timeout: 7000 });
+      })
+      .finally(() => busy.end());
+    return 'copied';
+  }
+  if (handle) {
+    try { await db.saveHandle(id, handle); return 'handle'; } catch (e) { console.warn(e); }
+  }
+  return 'none';
+}
+
+function explainLargeFiles(results) {
+  const none = results.filter(r => r.how === 'none').map(r => r.name);
+  const handled = results.filter(r => r.how === 'handle');
+  if (none.length) {
+    const first = none.length > 1 ? `「${none[0]}」等 ${none.length} 個大型檔案` : `「${none[0]}」是大型檔案，`;
+    toast(`${first}沒有複製到瀏覽器，不會多佔硬碟空間。重新整理或下次開啟時需要再匯入一次（會自動接回）。`, { timeout: 10000 });
+  }
+  let tipShown = false;
+  try { tipShown = localStorage.getItem('onlinecut.handleTip') === '1'; } catch { /* 私密模式 */ }
+  if (handled.length && !tipShown) {
+    toast('大型檔案只記住它在電腦上的位置，沒有複製，不會多佔硬碟空間。下次開啟時會請你允許讀取。', { timeout: 10000 });
+    try { localStorage.setItem('onlinecut.handleTip', '1'); } catch { /* 私密模式 */ }
+  }
+}
+
+/** 用記住的檔案代號接回素材。ask = true 時可以跳出權限詢問（需要使用者點擊） */
+async function restoreFromHandle(info, handle, ask) {
+  try {
+    let perm = (await handle.queryPermission?.({ mode: 'read' })) ?? 'granted';
+    if (perm !== 'granted') {
+      if (!ask) return 'prompt';
+      perm = await handle.requestPermission({ mode: 'read' });
+      if (perm !== 'granted') return 'denied';
+    }
+    const file = await handle.getFile();
+    if (info.size != null && file.size !== info.size) return 'changed';
+    await runtime.register(info, file);
+    return 'ok';
+  } catch (e) {
+    console.warn(e);
+    return 'gone';
+  }
+}
+
+const pendingHandles = []; // 等使用者允許讀取的大型素材 { info, handle }
+async function grantPendingHandles() {
+  const list = pendingHandles.splice(0);
+  const results = [];
+  for (const { info, handle } of list) results.push(await restoreFromHandle(info, handle, true));
+  store.emit('change', { type: 'media' });
+  const ok = results.filter(r => r === 'ok').length;
+  const gone = results.filter(r => r === 'gone' || r === 'changed').length;
+  const denied = results.filter(r => r === 'denied' || r === 'prompt').length;
+  if (ok) toast(`已接回 ${ok} 個大型素材`, { type: 'success' });
+  if (gone) toast(`有 ${gone} 個大型素材找不到原始檔案（可能被移動、改名或修改過），請重新匯入`, { type: 'error', timeout: 9000 });
+  if (denied) {
+    list.filter((_, i) => results[i] === 'denied' || results[i] === 'prompt').forEach(x => pendingHandles.push(x));
+    askForHandlePermission();
+  }
+}
+
+function askForHandlePermission() {
+  if (!pendingHandles.length) return;
+  const n = pendingHandles.length;
+  toast(`有 ${n} 個大型素材沒有複製到瀏覽器，需要你允許讀取電腦上的原始檔案`, { timeout: 0, action: { label: '允許讀取', run: grantPendingHandles } });
+}
+
 async function loadSaved() {
   let raw = null;
   try { raw = await db.loadProject(); } catch (e) { console.warn(e); }
   const project = raw ? normalizeProject(raw) : null;
   if (!project) { store.replace(createProject()); setSaveState(''); return; }
-  let missing = 0;
+  let missing = 0, gone = 0;
   for (const m of Object.values(project.media)) {
     let file = null;
     try { file = await db.getFile(m.id); } catch { /* 讀不到就當遺失 */ }
-    if (file) await runtime.register(m, file);
-    else missing++;
+    if (file) { await runtime.register(m, file); continue; }
+    let handle = null;
+    try { handle = await db.getHandle(m.id); } catch { /* 沒有 */ }
+    if (!handle) { missing++; continue; }
+    const r = await restoreFromHandle(m, handle, false);
+    if (r === 'prompt') pendingHandles.push({ info: m, handle });
+    else if (r !== 'ok') gone++;
   }
   store.replace(project);
   setSaveState('已載入上次的專案');
-  if (missing) toast(`有 ${missing} 個素材檔案沒能保存下來（可能是空間不足），請重新匯入`, { type: 'error', timeout: 8000 });
+  if (missing) toast(`有 ${missing} 個素材需要重新匯入（大型檔案或空間不足時沒有存到瀏覽器），匯入同一個檔案就會自動接回`, { type: 'error', timeout: 9000 });
+  if (gone) toast(`有 ${gone} 個大型素材找不到原始檔案（可能被移動、改名或修改過），請重新匯入`, { type: 'error', timeout: 9000 });
+  askForHandlePermission();
 }
 
 // ============================================================
 // 匯入
 // ============================================================
+const MEDIA_ACCEPT = { 'video/*': VIDEO_EXTS, 'audio/*': AUDIO_EXTS, 'image/*': IMAGE_EXTS };
+
+/** 選檔：支援的瀏覽器用 showOpenFilePicker（拿得到檔案代號，大檔案就不用複製） */
+async function pickMediaFiles() {
+  if (typeof window.showOpenFilePicker !== 'function') { $('fileInput').click(); return; }
+  let handles;
+  try {
+    handles = await window.showOpenFilePicker({ multiple: true, id: 'onlinecut-media', types: [{ description: '影片、音樂、圖片', accept: MEDIA_ACCEPT }] });
+  } catch (e) {
+    if (e?.name !== 'AbortError') $('fileInput').click(); // 不是使用者取消：退回一般選檔
+    return;
+  }
+  const entries = [];
+  for (const h of handles) {
+    try { entries.push({ file: await h.getFile(), handle: h }); } catch (e) { toast(`無法讀取「${h.name}」`, { type: 'error' }); }
+  }
+  importEntries(entries);
+}
+
 let importSeq = 0;
-async function importFiles(files) {
-  let list = [...files];
+function importFiles(files) {
+  return importEntries([...files].map(file => ({ file, handle: null })));
+}
+
+/** entries: [{ file, handle(可能沒有) }] */
+async function importEntries(entries) {
+  let list = entries.filter(e => e && e.file);
   if (!list.length) return;
   // 專案檔另外處理（一次只開一個）
-  const projectFiles = list.filter(f => isProjectFileName(f.name));
+  const projectFiles = list.filter(e => isProjectFileName(e.file.name));
   if (projectFiles.length) {
     if (projectFiles.length > 1 || list.length > projectFiles.length) toast('一次只能開啟一個專案檔，其他檔案沒有匯入', { timeout: 6000 });
-    await openProjectFile(projectFiles[0]);
+    await openProjectFile(projectFiles[0].file);
     return;
   }
   db.persist();
+  const persisted = [];
   // 檔名與大小都跟「遺失的素材」一樣：直接接回去，不新增素材
   const relinked = [];
-  list = list.filter((file) => {
-    const target = findRelinkTarget(store.project, file, (id) => !runtime.has(id) && !relinked.includes(id));
-    if (!target) return true;
+  const rest = [];
+  for (const e of list) {
+    const target = findRelinkTarget(store.project, e.file, (id) => !runtime.has(id) && !relinked.includes(id));
+    if (!target) { rest.push(e); continue; }
     relinked.push(target.id);
-    runtime.register(target, file);
-    db.saveFile(target.id, file).catch(() => toast(`「${file.name}」太大，無法存到瀏覽器；重新整理後需要再匯入一次`, { type: 'error', timeout: 7000 }));
-    return false;
-  });
+    const i = pendingHandles.findIndex(p => p.info.id === target.id);
+    if (i >= 0) pendingHandles.splice(i, 1);
+    await runtime.register(target, e.file);
+    persisted.push({ name: e.file.name, how: await persistMedia(target.id, e.file, e.handle) });
+  }
   if (relinked.length) {
     store.emit('change', { type: 'media' });
     toast(`已接回 ${relinked.length} 個遺失的素材`, { type: 'success' });
   }
-  if (!list.length) return;
+  list = rest;
+  if (!list.length) { explainLargeFiles(persisted); return; }
   const wasEmpty = store.project.clips.length === 0;
   const imported = [];
-  await Promise.all(list.map(async (file) => {
+  await Promise.all(list.map(async ({ file, handle }) => {
     const key = `imp${++importSeq}`;
     mediaPanel.addLoading(key, file.name);
     try {
       const { info, url } = await probe(file);
-      try { await db.saveFile(info.id, file); } catch (e) {
-        console.warn(e);
-        toast(`「${file.name}」太大，無法存到瀏覽器；重新整理後需要再匯入一次`, { type: 'error', timeout: 7000 });
-      }
+      // 不等複製完成：素材馬上可以用
       await runtime.register(info, file, url);
       store.commit(addMedia(store.project, info));
       imported.push(info);
+      persisted.push({ name: file.name, how: await persistMedia(info.id, file, handle) });
     } catch (e) {
       toast(e.message || `無法匯入 ${file.name}`, { type: 'error', timeout: 6000 });
     } finally {
       mediaPanel.removeLoading(key);
     }
   }));
+  explainLargeFiles(persisted);
   if (!imported.length) return;
   // 空專案：直接排進時間軸，並把畫面比例調成跟第一支影片一樣
   if (wasEmpty) {
-    imported.sort((a, b) => list.findIndex(f => f.name === a.name) - list.findIndex(f => f.name === b.name));
+    imported.sort((a, b) => list.findIndex(e => e.file.name === a.name) - list.findIndex(e => e.file.name === b.name));
     const first = imported.find(m => m.type === 'video' || m.type === 'image');
     if (first?.width) matchAspect(first);
     let p = store.project;
@@ -291,6 +414,7 @@ async function collectGarbage() {
     const keep = new Set(Object.keys(store.project.media));
     for (const s of [...store.history.past, ...store.history.future]) for (const id of Object.keys(s.media)) keep.add(id);
     for (const id of await db.listFileIds()) if (!keep.has(id)) await db.deleteFile(id);
+    for (const id of await db.listHandleIds()) if (!keep.has(id)) await db.deleteHandle(id);
   } catch { /* 下次再清 */ }
 }
 
@@ -368,10 +492,12 @@ async function openProjectFile(file) {
     }))) return;
 
     await resetWorkspace();
-    let notStored = 0;
+    let notStored = 0, large = 0;
     for (const [id, f] of data.files) {
-      try { await db.saveFile(id, f); } catch { notStored++; }
       await runtime.register(data.project.media[id], f);
+      // 大檔案一樣不複製到瀏覽器（專案檔裡的檔案沒有檔案代號可以記）
+      if (isLarge(f)) { large++; continue; }
+      try { await db.saveFile(id, f); } catch { notStored++; }
     }
     store.replace(data.project);
     await saveNow();
@@ -383,7 +509,8 @@ async function openProjectFile(file) {
       const why = data.corrupted.length ? `（其中 ${data.corrupted.length} 個在專案檔裡已損毀）` : data.includesMedia ? '' : '（這個專案檔沒有包含素材）';
       toast(`有 ${lost} 個素材需要重新匯入${why}，匯入同名、同大小的原始檔就會自動接回`, { type: 'error', timeout: 10000 });
     }
-    if (notStored) toast(`有 ${notStored} 個素材太大，無法存到瀏覽器；重新整理後需要再匯入一次`, { type: 'error', timeout: 8000 });
+    if (notStored) toast(`有 ${notStored} 個素材無法存到瀏覽器（空間可能不足）；重新整理後需要再開啟一次這個專案檔`, { type: 'error', timeout: 8000 });
+    if (large) toast(`有 ${large} 個大型素材沒有複製到瀏覽器，不會多佔硬碟空間；重新整理後需要再開啟一次這個專案檔`, { timeout: 10000 });
   } finally {
     opening = false;
   }
@@ -486,7 +613,7 @@ if (/Mac|iPhone|iPad/.test(navigator.platform)) menu.querySelectorAll('kbd').for
 $('btnShortcuts').onclick = showShortcuts;
 $('btnSample').onclick = loadSample;
 $('welcomeSample').onclick = loadSample;
-$('welcomeImport').onclick = () => $('fileInput').click();
+$('welcomeImport').onclick = () => pickMediaFiles();
 $('btnAddVideoTrack').onclick = () => store.commit(addTrack(store.project, 'video'));
 $('btnAddAudioTrack').onclick = () => store.commit(addTrack(store.project, 'audio'));
 $('btnFullscreen').onclick = () => $('frame').requestFullscreen?.().catch(() => toast('瀏覽器不允許全螢幕'));
@@ -634,7 +761,14 @@ window.addEventListener('drop', (e) => {
   e.preventDefault();
   dragDepth = 0;
   $('dropOverlay').hidden = true;
-  importFiles(e.dataTransfer.files);
+  // 檔案代號只能在 drop 事件當下取得（Chrome / Edge）；拿到的話大檔案就不用複製
+  const files = [...e.dataTransfer.files];
+  const items = [...(e.dataTransfer.items || [])].filter(i => i.kind === 'file');
+  const pending = items.map(i => (typeof i.getAsFileSystemHandle === 'function' ? i.getAsFileSystemHandle().catch(() => null) : Promise.resolve(null)));
+  Promise.all(pending).then((handles) => {
+    const fileHandles = handles.filter(h => h && h.kind === 'file');
+    importEntries(files.map(file => ({ file, handle: fileHandles.find(h => h.name === file.name) ?? null })));
+  });
 });
 
 // ============================================================

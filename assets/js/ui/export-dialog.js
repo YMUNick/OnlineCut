@@ -130,6 +130,7 @@ export function openExportDialog({ project, runtime, player }) {
         <div class="ok">${icon('check')}</div>
         <p style="margin:0 0 4px;color:var(--text);font-weight:600">影片完成了</p>
         <p style="margin:0" class="hint-line">${escapeHtml(name)} · ${formatBytes(res.blob.size)} · ${res.width}×${res.height} · 花了 ${formatDuration(Math.max(1, secs))}</p>
+        ${res.warnings?.length ? `<p class="hint-line" style="color:#ff8a73;text-align:left">${icon('alert', 'icon-sm')} 有 ${res.warnings.length} 個素材的聲音讀不到，影片裡這些片段會沒有聲音：${res.warnings.map(w => `「${escapeHtml(w.name)}」（${escapeHtml(w.reason)}）`).join('、')}</p>` : ''}
         <video controls playsinline src="${url}"></video>
       </div>`;
     footer.innerHTML = `<button class="ghost-btn" data-close2>關閉</button><a class="primary-btn" data-dl href="${url}" download="${escapeHtml(name)}" style="text-decoration:none">${icon('download')}下載影片</a>`;

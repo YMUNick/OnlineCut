@@ -1,12 +1,20 @@
 // 素材匯入與執行期資源：讀取長度/尺寸、縮圖膠卷、音訊波形、解碼後的音訊（匯出用）
 
 import { uid } from '../core/project.js';
+import { loadMediabunny, canStreamAudio } from '../engine/mb.js';
 
-const VIDEO_EXT = /\.(mp4|m4v|mov|webm|mkv|ogv|avi)$/i;
-const AUDIO_EXT = /\.(mp3|wav|m4a|aac|ogg|oga|opus|flac|weba)$/i;
-const IMAGE_EXT = /\.(png|jpe?g|gif|webp|avif|bmp|svg)$/i;
+export const VIDEO_EXTS = ['.mp4', '.m4v', '.mov', '.webm', '.mkv', '.ogv', '.avi'];
+export const AUDIO_EXTS = ['.mp3', '.wav', '.m4a', '.aac', '.ogg', '.oga', '.opus', '.flac', '.weba'];
+export const IMAGE_EXTS = ['.png', '.jpg', '.jpeg', '.gif', '.webp', '.avif', '.bmp', '.svg'];
+const extRe = (list) => new RegExp(`(${list.map(e => e.replace('.', '\\.')).join('|')})$`, 'i');
+const VIDEO_EXT = extRe(VIDEO_EXTS);
+const AUDIO_EXT = extRe(AUDIO_EXTS);
+const IMAGE_EXT = extRe(IMAGE_EXTS);
 
-export const MAX_DECODE_BYTES = 400 * 1024 * 1024; // 超過就不解碼音訊（避免吃光記憶體）
+export const librarySettings = {
+  // 超過這個大小就不把整個檔案讀進記憶體解碼聲音，改用串流（只解需要的部分）
+  maxDecodeBytes: 400 * 1024 * 1024,
+};
 
 export function detectType(file) {
   const mime = file.type || '';
@@ -110,7 +118,8 @@ export class MediaRuntime {
   async register(info, file, url = null) {
     // 複製一份：之後偵測到的資訊（例如有沒有音軌）只記在這裡，不能偷改專案狀態
     info = { ...info };
-    const item = { info, file, url: url || URL.createObjectURL(file), image: null, thumbs: [], peaks: null, peaksPerSec: 0, audioBuffer: null };
+    // hasAudio：true / false / undefined（還不知道）
+    const item = { info, file, url: url || URL.createObjectURL(file), image: null, thumbs: [], peaks: null, peaksPerSec: 0, audioBuffer: null, hasAudio: info.type === 'image' ? false : undefined };
     this.items.set(info.id, item);
     if (info.type === 'image') {
       const img = new Image();
@@ -172,26 +181,24 @@ export class MediaRuntime {
     return this.audioCtx;
   }
 
-  /** 解碼整段音訊（匯出混音也會用到）；沒有音軌的影片回傳 null */
+  /**
+   * 把整個檔案讀進記憶體解碼聲音（只用在不大的檔案）。
+   * 檔案太大回傳 null，但「沒有聲音」要由 hasAudio 判斷，不能用這裡的結果。
+   */
   async decodeAudio(id) {
     const item = this.items.get(id);
     if (!item || item.info.type === 'image') return null;
     if (item.audioBuffer !== null) return item.audioBuffer || null;
     if (item.decoding) return item.decoding;
-    if (item.file.size > MAX_DECODE_BYTES) {
-      item.audioBuffer = false;
-      return null;
-    }
+    if (item.file.size > librarySettings.maxDecodeBytes) return null;
     item.decoding = (async () => {
       try {
-        const buf = await item.file.arrayBuffer();
-        const audio = await this.ctx().decodeAudioData(buf);
+        const audio = await this.ctx().decodeAudioData(await item.file.arrayBuffer());
         item.audioBuffer = audio;
-        item.info.hasAudio = true;
+        item.hasAudio = true;
         return audio;
       } catch {
-        item.audioBuffer = false; // 沒有音軌或無法解碼
-        item.info.hasAudio = false;
+        item.audioBuffer = false; // 沒有音軌，或瀏覽器的 decodeAudioData 不支援這種編碼
         return null;
       } finally {
         item.decoding = null;
@@ -202,12 +209,61 @@ export class MediaRuntime {
 
   async buildPeaks(item) {
     const audio = await this.decodeAudio(item.info.id);
-    if (!audio) { this.emit(item.info.id); return; }
-    item.peaksPerSec = 100;
-    item.peaks = computePeaks(audio, item.peaksPerSec);
-    // 影片的音訊只在匯出時需要，先釋放記憶體，需要時再解碼
-    if (item.info.type === 'video' && audio.length * audio.numberOfChannels > 48000 * 2 * 120) item.audioBuffer = null;
+    if (audio) {
+      item.peaksPerSec = 100;
+      item.peaks = computePeaks(audio, item.peaksPerSec);
+      // 影片的音訊只在匯出時需要，先釋放記憶體，需要時再解碼
+      if (item.info.type === 'video' && audio.length * audio.numberOfChannels > 48000 * 2 * 120) item.audioBuffer = null;
+    } else {
+      // 大檔案、或 decodeAudioData 不支援：用串流方式邊解碼邊算波形
+      await this.streamPeaks(item);
+    }
     this.emit(item.info.id);
+  }
+
+  /** 串流計算波形：一次只處理一小段，不會把整個檔案讀進記憶體 */
+  async streamPeaks(item) {
+    if (!canStreamAudio()) {
+      if (item.audioBuffer === false) item.hasAudio = false;
+      return;
+    }
+    try {
+      const mb = await loadMediabunny();
+      const input = new mb.Input({ formats: mb.ALL_FORMATS, source: new mb.BlobSource(item.file) });
+      try {
+        const track = await input.getPrimaryAudioTrack();
+        if (!track) { item.hasAudio = false; return; }
+        item.hasAudio = true;
+        if (!(await track.canDecode())) return;
+        const perSec = 100;
+        const peaks = new Float32Array(Math.ceil((item.info.duration || 1) * perSec) + 1);
+        item.peaksPerSec = perSec;
+        let lastEmit = performance.now();
+        for await (const { buffer, timestamp } of new mb.AudioBufferSink(track).buffers()) {
+          if (!this.items.has(item.info.id)) return; // 素材已經移除
+          const rate = buffer.sampleRate;
+          for (let ch = 0; ch < buffer.numberOfChannels; ch++) {
+            const data = buffer.getChannelData(ch);
+            for (let i = 0; i < data.length; i++) {
+              const k = Math.floor((timestamp + i / rate) * perSec);
+              const v = data[i] < 0 ? -data[i] : data[i];
+              if (k >= 0 && k < peaks.length && v > peaks[k]) peaks[k] = v;
+            }
+          }
+          // 每隔一段時間更新畫面，長檔案也能看到波形逐漸出現
+          if (performance.now() - lastEmit > 500) {
+            item.peaks = peaks;
+            this.emit(item.info.id);
+            lastEmit = performance.now();
+          }
+        }
+        item.peaks = peaks;
+      } finally {
+        input.dispose?.();
+      }
+    } catch {
+      /* 格式不支援串流解碼：沒有波形，匯出時會另外提示 */
+    }
   }
 }
 

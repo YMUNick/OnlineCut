@@ -4,9 +4,13 @@
 //   2. 瀏覽器沒有 WebCodecs 時，用 MediaRecorder 即時錄製成 WebM（需要整段播放一次）。
 // 聲音一律用 OfflineAudioContext 預先混好，包含音量、淡入淡出、變速。
 
-import { activeClipsAt, getDuration, getTrack, sourceTime, sourceSpan, clipEnd } from '../core/project.js';
+import { activeClipsAt, getDuration, sourceTime, clipEnd } from '../core/project.js';
 import { drawFrame, fontString } from './renderer.js';
 import { Player } from './player.js';
+import { loadMediabunny } from './mb.js';
+import { AudioSources, mixChunks, projectHasAudio, audibleClips } from './audio.js';
+
+export { loadMediabunny };
 
 export const SAMPLE_RATE = 48000;
 export const RESOLUTIONS = [
@@ -40,13 +44,6 @@ const check = (signal) => { if (signal?.aborted) throw new Aborted(); };
 // ============================================================
 // 能力偵測
 // ============================================================
-let mbPromise = null;
-/** mediabunny 約 700KB，只在真的要匯出時才載入 */
-export function loadMediabunny() {
-  if (!mbPromise) mbPromise = import('../../vendor/mediabunny.min.mjs').catch((e) => { mbPromise = null; throw e; });
-  return mbPromise;
-}
-
 async function canEncodeH264(width, height, fps, bitrate) {
   if (typeof VideoEncoder === 'undefined') return false;
   for (const codec of fps > 30 ? ['avc1.64002a', 'avc1.4d002a'] : ['avc1.640028', 'avc1.4d0028', 'avc1.42e028']) {
@@ -93,44 +90,21 @@ async function loadFonts(project) {
   await document.fonts.ready;
 }
 
-function audibleClips(project) {
-  return project.clips.filter(c => (c.type === 'video' || c.type === 'audio') && !c.muted && c.volume > 0 && !getTrack(project, c.trackId)?.muted);
-}
-
-/** 把所有聲音混成一段 AudioBuffer；沒有聲音時回傳 null */
-export async function mixAudio(project, runtime, duration, { signal, onProgress } = {}) {
-  const clips = audibleClips(project);
-  if (!clips.length) return null;
-  const length = Math.max(1, Math.ceil(duration * SAMPLE_RATE));
-  const ctx = new OfflineAudioContext(2, length, SAMPLE_RATE);
-  let any = false;
-  let i = 0;
-  for (const c of clips) {
-    check(signal);
-    onProgress?.(i++ / clips.length);
-    const buf = await runtime.decodeAudio(c.mediaId);
-    if (!buf) continue;
-    any = true;
-    const src = ctx.createBufferSource();
-    src.buffer = buf;
-    src.playbackRate.value = c.speed;
-    const g = ctx.createGain();
-    const v = Math.min(2, c.volume);
-    const t0 = c.start, t1 = clipEnd(c);
-    // 淡入淡出用線性包絡
-    g.gain.setValueAtTime(c.fadeIn > 0 ? 0 : v, t0);
-    if (c.fadeIn > 0) g.gain.linearRampToValueAtTime(v, t0 + c.fadeIn);
-    if (c.fadeOut > 0) {
-      g.gain.setValueAtTime(v, Math.max(t0 + c.fadeIn, t1 - c.fadeOut));
-      g.gain.linearRampToValueAtTime(0, t1);
-    }
-    src.connect(g).connect(ctx.destination);
-    src.start(t0, c.srcIn, sourceSpan(c));
-    src.stop(t1);
+/** 把分段混好的聲音接成一整段（只有即時錄製備援需要） */
+async function mixWhole(project, sources, duration, { signal, onProgress, onWarning }) {
+  const parts = [];
+  for await (const c of mixChunks(project, sources, duration, { sampleRate: SAMPLE_RATE, signal, onWarning })) {
+    parts.push(c.buffer);
+    onProgress?.(c.end / duration);
   }
-  if (!any) return null;
-  check(signal);
-  return ctx.startRendering();
+  const length = parts.reduce((n, b) => n + b.length, 0);
+  const out = new AudioBuffer({ length, numberOfChannels: 2, sampleRate: SAMPLE_RATE });
+  let off = 0;
+  for (const b of parts) {
+    for (let ch = 0; ch < 2; ch++) out.copyToChannel(b.getChannelData(ch), ch, off);
+    off += b.length;
+  }
+  return out;
 }
 
 // ============================================================
@@ -288,22 +262,31 @@ export async function exportVideo({ project, runtime, settings = {}, onProgress 
 
   await loadFonts(project);
   onProgress({ phase: 'audio', progress: 0 });
-  const audio = await mixAudio(project, runtime, duration, { signal, onProgress: (p) => onProgress({ phase: 'audio', progress: p }) });
-  check(signal);
-
-  if (!settings.forceRecorder && (await canEncodeH264(width, height, fps, bitrate))) {
-    const mb = await loadMediabunny();
-    // 直接問瀏覽器（mediabunny 會快取檢查結果）
-    const audioCodec = !audio ? null : (await canEncodeAudio('mp4a.40.2')) ? 'aac' : (await canEncodeAudio('opus')) ? 'opus' : null;
-    // 有聲音卻不能編碼音訊時，改走即時錄製，不要輸出沒有聲音的影片
-    if (!audio || audioCodec) {
-      return exportWebCodecs({ mb, project, runtime, duration, fps, width, height, bitrate, audio, audioCodec, onProgress, signal });
+  const sources = new AudioSources(runtime);
+  const warnings = [];
+  const onWarning = (mediaId, reason) => warnings.push({ mediaId, name: project.media[mediaId]?.name ?? mediaId, reason });
+  try {
+    const hasAudio = await projectHasAudio(project, sources);
+    check(signal);
+    if (!settings.forceRecorder && (await canEncodeH264(width, height, fps, bitrate))) {
+      // 直接問瀏覽器（mediabunny 會快取檢查結果）
+      const audioCodec = !hasAudio ? null : (await canEncodeAudio('mp4a.40.2')) ? 'aac' : (await canEncodeAudio('opus')) ? 'opus' : null;
+      // 有聲音卻不能編碼音訊時，改走即時錄製，不要輸出沒有聲音的影片
+      if (!hasAudio || audioCodec) {
+        const mb = await loadMediabunny();
+        const res = await exportWebCodecs({ mb, project, runtime, sources, duration, fps, width, height, bitrate, audioCodec, onProgress, onWarning, signal });
+        return { ...res, warnings };
+      }
     }
+    const audio = hasAudio ? await mixWhole(project, sources, duration, { signal, onWarning, onProgress: (p) => onProgress({ phase: 'audio', progress: p }) }) : null;
+    const res = await exportRecorder({ project, runtime, duration, fps, width, height, bitrate, audio, onProgress, signal });
+    return { ...res, warnings };
+  } finally {
+    sources.dispose();
   }
-  return exportRecorder({ project, runtime, duration, fps, width, height, bitrate, audio, onProgress, signal });
 }
 
-async function exportWebCodecs({ mb, project, runtime, duration, fps, width, height, bitrate, audio, audioCodec, onProgress, signal }) {
+async function exportWebCodecs({ mb, project, runtime, sources, duration, fps, width, height, bitrate, audioCodec, onProgress, onWarning, signal }) {
   const videoCodec = await mb.getFirstEncodableVideoCodec(['avc'], { width, height, quality: new mb.Quality({ bitrate }) });
   if (!videoCodec) throw new Error('這個瀏覽器無法編碼 H.264 影片');
 
@@ -322,16 +305,22 @@ async function exportWebCodecs({ mb, project, runtime, duration, fps, width, hei
   }
 
   const frames = Math.max(1, Math.round(duration * fps));
-  const sources = new FrameSources(project, runtime, fps, frames, mb);
+  const frameSources = new FrameSources(project, runtime, fps, frames, mb);
   const started = performance.now();
   let finished = false;
   try {
     await output.start();
-    if (audioSource) await audioSource.add(audio);
+    // 聲音分段解碼、混音、編碼，記憶體用量跟檔案大小無關
+    if (audioSource) {
+      for await (const c of mixChunks(project, sources, duration, { sampleRate: SAMPLE_RATE, signal, onWarning })) {
+        await audioSource.add(c.buffer);
+        onProgress({ phase: 'audio', progress: c.end / duration });
+      }
+    }
     for (let i = 0; i < frames; i++) {
       check(signal);
-      await sources.prepare(i);
-      drawFrame(ctx, project, i / fps, { getSource: (c) => sources.source(c), getMediaInfo: (c) => project.media[c.mediaId] });
+      await frameSources.prepare(i);
+      drawFrame(ctx, project, i / fps, { getSource: (c) => frameSources.source(c), getMediaInfo: (c) => project.media[c.mediaId] });
       await videoSource.add(i / fps, 1 / fps);
       if (i % 3 === 0 || i === frames - 1) {
         const elapsed = (performance.now() - started) / 1000;
@@ -342,7 +331,7 @@ async function exportWebCodecs({ mb, project, runtime, duration, fps, width, hei
     await output.finalize();
     finished = true;
   } finally {
-    sources.dispose();
+    frameSources.dispose();
     if (!finished && output.state !== 'canceled') await output.cancel().catch(() => {});
   }
   return {

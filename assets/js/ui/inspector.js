@@ -330,7 +330,7 @@ export class Inspector {
   buildAudio(clip) {
     const s = this.section(clip.type === 'video' ? '聲音與速度' : '聲音');
     const item = this.runtime.get(clip.mediaId);
-    if (clip.type === 'video' && item && item.audioBuffer === false) {
+    if (clip.type === 'video' && item && item.hasAudio === false) {
       s.insertAdjacentHTML('beforeend', '<p class="hint-line" style="margin:0 0 10px">這段影片沒有聲音。</p>');
     }
     s.appendChild(this.slider('音量', { min: 0, max: 200, step: 1, unit: '%', get: c => Math.round(c.volume * 100), set: v => ({ volume: v / 100 }), key: 'vol' }));

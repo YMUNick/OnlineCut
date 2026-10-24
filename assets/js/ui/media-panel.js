@@ -26,7 +26,7 @@ export function formatBytes(n) {
 }
 
 export class MediaPanel {
-  constructor({ store, runtime, els, onImport, onAdd, onRemove, onAddText }) {
+  constructor({ store, runtime, els, onImport, onPick, onAdd, onRemove, onAddText }) {
     this.store = store;
     this.runtime = runtime;
     this.els = els;
@@ -35,8 +35,8 @@ export class MediaPanel {
     this.loading = new Map(); // 匯入中的暫存卡片
     this.cards = new Map();
 
-    els.dropzone.addEventListener('click', () => els.fileInput.click());
-    els.dropzone.addEventListener('keydown', (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); els.fileInput.click(); } });
+    els.dropzone.addEventListener('click', () => onPick());
+    els.dropzone.addEventListener('keydown', (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onPick(); } });
     els.fileInput.addEventListener('change', () => {
       if (els.fileInput.files.length) onImport([...els.fileInput.files]);
       els.fileInput.value = '';

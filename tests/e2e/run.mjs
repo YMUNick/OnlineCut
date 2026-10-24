@@ -523,9 +523,7 @@ try {
     await page.setInputFiles('#fileInput', [fx.silent]);
     await waitFor(async () => Object.keys((await state()).project.media).length === 2, 10000, '匯入');
     const id = Object.values((await state()).project.media).find(m => m.name === 'silent.webm').id;
-    await page.evaluate((id) => window.__oc.runtime.decodeAudio(id), id);
-    const hasAudio = await page.evaluate((id) => window.__oc.runtime.get(id).info.hasAudio, id);
-    assert.equal(hasAudio, false);
+    await waitFor(() => page.evaluate((id) => window.__oc.runtime.get(id).hasAudio === false, id), 10000, '判斷出沒有音軌');
   });
 
   await test('素材卡片上的 ＋ 加到播放頭', async () => {
@@ -840,7 +838,7 @@ try {
       const n = Object.keys((await state()).project.media).length;
       await page.setInputFiles('#fileInput', [fx.portrait]);
       await waitFor(async () => Object.keys((await state()).project.media).length === n + 1, 10000, '匯入');
-      assert.ok((await errorToasts()).slice(before).some(t => /vertical\.mp4」太大，無法存到瀏覽器/.test(t)));
+      await waitFor(async () => (await errorToasts()).slice(before).some(t => /vertical\.mp4」無法存到瀏覽器（空間可能不足）/.test(t)), 5000, '空間不足的提示');
       const id = Object.values((await state()).project.media).find(m => m.name === 'vertical.mp4').id;
       assert.equal(await page.evaluate((id) => window.__oc.runtime.has(id), id), true);
     } finally {
@@ -907,6 +905,171 @@ try {
     assert.ok(info.streams.some(s => s.codec_type === 'audio'));
   });
 
+  console.log('\n大型檔案（把門檻調低，用小檔案模擬）');
+  const setLimits = (o) => page.evaluate(async (o) => {
+    const { storageSettings } = await import('./assets/js/media/store.js');
+    const { librarySettings } = await import('./assets/js/media/library.js');
+    const { audioSettings } = await import('./assets/js/engine/audio.js');
+    if (o.copy != null) storageSettings.copyLimitBytes = o.copy;
+    if (o.decode != null) librarySettings.maxDecodeBytes = o.decode;
+    if (o.chunk != null) audioSettings.chunkSeconds = o.chunk;
+  }, o);
+  const dbHas = (id) => page.evaluate(async (id) => {
+    const { store } = await import('./assets/js/media/store.js');
+    return { file: !!(await store.getFile(id)), handle: !!(await store.getHandle(id)) };
+  }, id);
+  const meanVolume = (file, ss, t) => {
+    const r = spawnSync('ffmpeg', ['-hide_banner', '-ss', String(ss), '-t', String(t), '-i', file, '-af', 'volumedetect', '-f', 'null', '-'], { encoding: 'utf8' });
+    const m = r.stderr.match(/mean_volume: (-?[\d.]+) dB/);
+    return m ? parseFloat(m[1]) : -Infinity;
+  };
+
+  await test('大檔案不複製到瀏覽器：匯入馬上完成；重新整理後提示重新匯入，匯入同一個檔案就接回', async () => {
+    await newProjectUI();
+    await setLimits({ copy: 1000 });
+    await page.setInputFiles('#fileInput', [fx.video, fx.audio]);
+    await waitFor(async () => (await state()).project.clips.length === 2, 10000, '匯入');
+    const media = Object.values((await state()).project.media);
+    for (const m of media) assert.deepEqual(await dbHas(m.id), { file: false, handle: false }, `${m.name} 不應該複製`);
+    assert.ok(await page.locator('.toast >> text=沒有複製到瀏覽器').count(), '要告訴使用者');
+    await page.waitForTimeout(800);
+    await page.reload();
+    await page.waitForFunction(() => window.__oc && window.__oc.store.project.clips.length === 2);
+    await waitFor(async () => (await page.locator('.media-card.missing').count()) === 2, 5000, '兩個遺失');
+    assert.ok((await errorToasts()).at(-1).includes('需要重新匯入'));
+    await page.setInputFiles('#fileInput', [fx.video, fx.audio]);
+    await waitFor(async () => (await page.locator('.media-card.missing').count()) === 0, 10000, '接回');
+    assert.equal(Object.keys((await state()).project.media).length, 2, '沒有多出素材');
+  });
+
+  // 註：Playwright 的無頭 Chromium 從 IndexedDB 讀回檔案代號（FileSystemHandle）時會整個崩潰，
+  // 所以這裡把儲存層換成記憶體裡的假代號，測試「授權、接回、檔案不見」的流程；
+  // 「代號存進 IndexedDB 再讀回來」是瀏覽器本身的功能，這裡無法測試。
+  let bigId;
+  const installFakeHandles = () => page.evaluate(async () => {
+    const { store } = await import('./assets/js/media/store.js');
+    window.__handles = window.__handles || new Map();
+    store.saveHandle = async (id, h) => { window.__handles.set(id, h); };
+    store.getHandle = async (id) => window.__handles.get(id);
+    store.listHandleIds = async () => [...window.__handles.keys()];
+    store.deleteHandle = async (id) => { window.__handles.delete(id); };
+  });
+  /** 假的檔案代號：perm = 'granted' | 'prompt'；file 可以換掉或設成 null（檔案不見） */
+  const importViaFakeHandle = async () => {
+    const bytes = [...await readFile(fx.video)];
+    await page.evaluate(async (bytes) => {
+      const file = new File([new Uint8Array(bytes)], 'big-test.mp4', { type: 'video/mp4' });
+      const h = window.__fakeHandle = {
+        kind: 'file', name: file.name, perm: 'granted', file, asked: 0,
+        async queryPermission() { return this.perm; },
+        async requestPermission() { this.asked++; this.perm = 'granted'; return 'granted'; },
+        async getFile() { if (!this.file) throw new DOMException('not found', 'NotFoundError'); return this.file; },
+      };
+      await window.__oc.importEntries([{ file, handle: h }]);
+    }, bytes);
+  };
+
+  await test('Chrome / Edge：大檔案只記住檔案位置（不複製），重新開啟後自動接回', async () => {
+    await newProjectUI();
+    await setLimits({ copy: 1000 });
+    await installFakeHandles();
+    await importViaFakeHandle();
+    await waitFor(async () => (await state()).project.clips.length === 1, 10000, '匯入');
+    bigId = Object.keys((await state()).project.media)[0];
+    assert.equal((await dbHas(bigId)).file, false, '沒有複製檔案');
+    assert.equal(await page.evaluate((id) => window.__handles.has(id), bigId), true, '有記住檔案代號');
+    await saveAndRestart();
+    assert.equal(await page.evaluate((id) => window.__oc.runtime.has(id), bigId), true, '自動接回');
+    assert.equal(await page.locator('.media-card.missing').count(), 0);
+  });
+
+  await test('需要重新授權時：顯示「允許讀取」，按下去才去請求權限並接回', async () => {
+    await page.evaluate(() => { window.__fakeHandle.perm = 'prompt'; window.__fakeHandle.asked = 0; });
+    await saveAndRestart();
+    const btn = page.locator('.toast button:text("允許讀取")');
+    await btn.waitFor({ timeout: 5000 });
+    assert.equal(await page.evaluate((id) => window.__oc.runtime.has(id), bigId), false);
+    assert.equal(await page.evaluate(() => window.__fakeHandle.asked), 0, '使用者按下去之前不能請求權限');
+    await btn.click();
+    await waitFor(() => page.evaluate((id) => window.__oc.runtime.has(id), bigId), 5000, '接回');
+    assert.equal(await page.evaluate(() => window.__fakeHandle.asked), 1);
+    assert.ok(await page.locator('.toast >> text=已接回 1 個大型素材').count());
+  });
+
+  await test('原始檔案被刪掉或被修改：清楚提示，素材標示遺失', async () => {
+    for (const change of ['deleted', 'modified']) {
+      await page.evaluate(async (change) => {
+        const h = window.__fakeHandle;
+        h.perm = 'granted';
+        h.file = change === 'deleted' ? null : new File([new Uint8Array(10)], h.name);
+      }, change);
+      const before = (await errorToasts()).length;
+      await saveAndRestart();
+      await waitFor(async () => (await page.locator('.media-card.missing').count()) === 1, 5000, `${change}：遺失`);
+      await waitFor(async () => (await errorToasts()).slice(before).some(t => /找不到原始檔案/.test(t)), 5000, `${change}：提示`);
+    }
+  });
+
+  async function saveAndRestart() {
+    await page.waitForTimeout(800); // 等自動儲存
+    await page.evaluate(() => document.querySelectorAll('.toast').forEach(t => t.remove()));
+    await page.evaluate(() => window.__oc.simulateRestart());
+    await page.waitForFunction(() => window.__oc.store.project.clips.length > 0);
+  }
+
+  await test('大檔案的聲音：串流計算波形、匯出有聲音（跨越多個混音段落）', async () => {
+    await newProjectUI();
+    await setLimits({ decode: 1000, chunk: 0.7 });
+    try {
+      await page.setInputFiles('#fileInput', [fx.video]);
+      await waitFor(async () => (await state()).project.clips.length === 1, 10000, '匯入');
+      const id = Object.keys((await state()).project.media)[0];
+      await waitFor(() => page.evaluate((id) => !!window.__oc.runtime.get(id).peaks, id), 15000, '波形');
+      const info = await page.evaluate((id) => { const it = window.__oc.runtime.get(id); return { hasAudio: it.hasAudio, decodedWhole: !!it.audioBuffer, max: Math.max(...it.peaks) }; }, id);
+      assert.deepEqual([info.hasAudio, info.decodedWhole], [true, false], '沒有把整個檔案解碼');
+      assert.ok(info.max > 0.1, `波形最大值 ${info.max}`);
+      const res = await page.evaluate(async (id) => {
+        const P = await import('./assets/js/core/project.js');
+        const { exportVideo } = await import('./assets/js/engine/exporter.js');
+        let p = P.createProject();
+        p = P.addMedia(p, window.__oc.store.project.media[id]);
+        p = P.addClip(p, 'video', { mediaId: id, srcIn: 0.5, duration: 3 }).project;
+        const r = await exportVideo({ project: p, runtime: window.__oc.runtime, settings: { short: 360 } });
+        return { warnings: r.warnings, bytes: Array.from(new Uint8Array(await r.blob.arrayBuffer())) };
+      }, id);
+      assert.deepEqual(res.warnings, []);
+      const out = path.join(tmp, 'big-audio.mp4');
+      await import('node:fs').then(fs => fs.writeFileSync(out, Buffer.from(res.bytes)));
+      assert.ok(Math.abs(parseFloat(probe(out).format.duration) - 3) < 0.15);
+      for (const [ss, t] of [[0.1, 0.5], [0.6, 0.3], [1.3, 0.5], [2.3, 0.5]]) {
+        const v = meanVolume(out, ss, t);
+        assert.ok(v > -30, `${ss}s 起的聲音 ${v} dB（應該有 440Hz 的聲音）`);
+      }
+    } finally {
+      await setLimits({ decode: 400 * 1024 * 1024, chunk: 30 });
+    }
+  });
+
+  await test('真的讀不到聲音時：匯出完成畫面會明確告知，不會默默沒聲音', async () => {
+    await setLimits({ decode: 1000 });
+    const saved = await page.evaluate(() => { window.__savedAD = window.AudioDecoder; window.AudioDecoder = undefined; return true; });
+    try {
+      assert.ok(saved);
+      await page.click('#btnExport');
+      await page.click('#exRes .seg-btn[data-v="480"]');
+      await page.click('.modal [data-go]');
+      await page.waitForSelector('.export-done', { timeout: 60000 });
+      const text = await page.textContent('.export-done');
+      assert.match(text, /有 1 個素材的聲音讀不到/);
+      assert.match(text, /clip\.mp4/);
+      await page.keyboard.press('Escape');
+    } finally {
+      await page.evaluate(() => { window.AudioDecoder = window.__savedAD; });
+      await setLimits({ decode: 400 * 1024 * 1024 });
+    }
+  });
+
+  await setLimits({ copy: 100 * 1024 * 1024 });
   console.log('\n首頁與手機版');
   await test('首頁載入、連結到編輯器', async () => {
     const p2 = await context.newPage();
