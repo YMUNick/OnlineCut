@@ -1,19 +1,18 @@
 // 右側屬性面板：專案設定 / 片段屬性
 
-import { updateClip, renameProject, setAspect, ASPECT_PRESETS, getDuration, clipEnd, canFrame, MIN_FRAME, audioFadesOf } from '../core/project.js';
+import { updateClip, renameProject, setAspect, ASPECT_PRESETS, getDuration, clipEnd, canFrame, MIN_FRAME, audioFadesOf, TEXT_DECO_IDS } from '../core/project.js';
 import { formatTimecode, formatDuration, clamp } from '../core/time.js';
 import { icon } from './icons.js';
 import { escapeHtml } from './dialogs.js';
 import { formatBytes } from './media-panel.js';
 import { _t } from '../i18n.js';
+import { FONTS, ensureFont } from './fonts.js';
 
 const TYPE_LABEL = { video: _t('影片片段'), image: _t('圖片片段'), text: _t('文字片段'), audio: _t('音訊片段') };
-const FONTS = [
-  ['Noto Sans TC', _t('思源黑體')],
-  ['Noto Serif TC', _t('思源宋體')],
-  ['system-ui', _t('系統字型')],
-  ['ui-monospace', _t('等寬字型')],
-];
+export const DECO_LABELS = {
+  burst: _t('爆炸標'), bubble: _t('對話框'), pill: _t('膠囊按鈕'), ribbon: _t('絲帶'), lower: _t('字幕條'),
+  badge: _t('圓章'), note: _t('便利貼'), marker: _t('螢光筆'), tag: _t('價格標籤'),
+};
 const FILTER_PRESETS = [
   [_t('原始'), { brightness: 100, contrast: 100, saturation: 100, grayscale: 0, blur: 0 }],
   [_t('鮮豔'), { brightness: 104, contrast: 112, saturation: 140, grayscale: 0, blur: 0 }],
@@ -199,8 +198,8 @@ export class Inspector {
 
     const font = document.createElement('select');
     font.className = 'select';
-    font.innerHTML = FONTS.map(([v, l]) => `<option value="${v}">${l}</option>`).join('');
-    font.onchange = () => this.commit(() => ({ text: { fontFamily: font.value } }), 'font');
+    font.innerHTML = FONTS.map(f => `<option value="${f.family}">${f.label}</option>`).join('');
+    font.onchange = () => { ensureFont(font.value, this.store.selectedClip?.text?.content); this.commit(() => ({ text: { fontFamily: font.value } }), 'font'); };
     this.bind(font, (c) => { font.value = c.text.fontFamily; });
     const fontRow = this.row(_t('字型'), font, true);
     fontRow.style.marginTop = '12px';
@@ -265,6 +264,28 @@ export class Inspector {
     sw.style.cssText = 'display:flex;align-items:center;gap:14px';
     sw.append(sc.el, shLbl);
     s.appendChild(this.row(_t('描邊色'), sw, true));
+
+    // 外框造型（爆炸標、對話框…）：造型跟著文字大小變化
+    const deco = document.createElement('select');
+    deco.className = 'select';
+    deco.innerHTML = [['', _t('無')], ...TEXT_DECO_IDS.map(id => [id, DECO_LABELS[id]])].map(([v, l]) => `<option value="${v}">${l}</option>`).join('');
+    deco.onchange = () => this.commit(() => ({ text: { deco: deco.value } }), 'deco');
+    this.bind(deco, c => { deco.value = c.text.deco || ''; });
+    s.appendChild(this.row(_t('外框造型'), deco, true));
+    const keepAlpha = (v, old) => { const a = parseColor(old).alpha; return a < 1 ? toRgba(v, a) : v; };
+    const d1 = this.colorInput(v => this.commit(c => ({ text: { decoColor: keepAlpha(v, c.text.decoColor) } }), 'decoColor'));
+    const d2 = this.colorInput(v => this.commit(c => ({ text: { decoColor2: keepAlpha(v, c.text.decoColor2) } }), 'decoColor2'));
+    const dw = document.createElement('div');
+    dw.style.cssText = 'display:flex;align-items:center;gap:10px;flex-wrap:wrap';
+    dw.append(d1.el, d2.el);
+    const decoColors = this.row(_t('造型顏色'), dw, true);
+    this.bind(dw, c => {
+      decoColors.hidden = !c.text.deco;
+      d1.set(parseColor(c.text.decoColor).hex);
+      d2.set(parseColor(c.text.decoColor2).hex);
+    });
+    s.appendChild(decoColors);
+    s.insertAdjacentHTML('beforeend', `<p class="hint-line">${_t('在預覽畫面上點兩下文字，就能直接修改內容與字型。')}</p>`);
   }
 
   buildTransform() {

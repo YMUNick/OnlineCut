@@ -77,8 +77,13 @@ export function defaultText() {
     strokeWidth: 0,
     align: 'center',
     shadow: true,
+    deco: '',               // 外框造型（見 engine/text-deco.js），'' 表示沒有
+    decoColor: '#ffd23f',
+    decoColor2: '#1b1440',
   };
 }
+
+export const TEXT_DECO_IDS = ['burst', 'bubble', 'pill', 'ribbon', 'lower', 'badge', 'note', 'marker', 'tag'];
 
 // ============================================================
 // 畫面框（子母畫面、分割畫面）
@@ -527,6 +532,7 @@ export function updateClip(project, id, patch) {
     if (transform) Object.assign(c.transform, transform);
     if (filters) Object.assign(c.filters, filters);
     if (text && c.text) Object.assign(c.text, text);
+    if (c.text && c.text.deco !== '' && !TEXT_DECO_IDS.includes(c.text.deco)) c.text.deco = '';
 
     c.opacity = clamp(Number(c.opacity) || 0, 0, 1);
     c.volume = clamp(Number(c.volume) || 0, 0, 2);
@@ -628,7 +634,7 @@ function sanitizeMedia(id, m) {
 }
 
 const CLIP_FIELDS = ['name', 'mediaId', 'trackId', 'start', 'duration', 'srcIn', 'speed', 'volume', 'muted', 'fadeIn', 'fadeOut', 'opacity'];
-const TEXT_FIELDS = { content: 5000, fontFamily: 60, color: 40, background: 40, strokeColor: 40 };
+const TEXT_FIELDS = { content: 5000, fontFamily: 60, color: 40, background: 40, strokeColor: 40, decoColor: 40, decoColor2: 40 };
 
 function sanitizeClip(c) {
   const fields = {};
@@ -674,6 +680,7 @@ function sanitizeClip(c) {
     m.text.strokeWidth = clamp(num(src.strokeWidth, d.strokeWidth), 0, 100);
     m.text.align = ['left', 'center', 'right'].includes(src.align) ? src.align : d.align;
     m.text.italic = src.italic === true;
+    m.text.deco = TEXT_DECO_IDS.includes(src.deco) ? src.deco : '';
     m.text.shadow = src.shadow === undefined ? d.shadow : src.shadow === true;
   }
   return m;

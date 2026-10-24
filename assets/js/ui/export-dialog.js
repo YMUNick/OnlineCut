@@ -7,6 +7,7 @@ import { getDuration } from '../core/project.js';
 import { formatDuration } from '../core/time.js';
 import { formatBytes } from './media-panel.js';
 import { _t } from '../i18n.js';
+import { ensureProjectFonts } from './fonts.js';
 
 const PREF_KEY = 'onlinecut.export';
 
@@ -97,6 +98,8 @@ export function openExportDialog({ project, runtime, player }) {
     const t0 = performance.now();
     busy.start();
     try {
+      // 文字用到的字型都要先載入，不然匯出的影片會用到後備字型
+      await ensureProjectFonts(project);
       const res = await exportVideo({
         project, runtime, signal: ctrl.signal,
         settings: { short, fps: prefs.fps, quality: prefs.quality },

@@ -238,6 +238,7 @@ export class Player {
       return;
     }
     this.layouts = drawFrame(this.ctx, p, this.time, {
+      hideTextFor: this.hideTextFor, // 正在預覽上直接編輯的文字：字由輸入框顯示
       getSource: (clip) => {
         if (clip.type === 'image') return this.runtime.get(clip.mediaId)?.image;
         if (clip.type === 'video') return this.elements.get(clip.id)?.el;

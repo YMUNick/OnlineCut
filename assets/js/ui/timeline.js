@@ -418,6 +418,11 @@ export class Timeline {
   }
 
   bindTracks() {
+    // 雙擊文字片段：在預覽上直接編輯
+    this.els.tracks.addEventListener('dblclick', (e) => {
+      const id = e.target.closest('.clip')?.dataset.clipId;
+      if (id && getClip(this.store.project, id)?.type === 'text') this.onEditText?.(id);
+    });
     this.els.tracks.addEventListener('pointerdown', (e) => {
       if (e.button !== 0) return;
       const clipEl = e.target.closest('.clip');

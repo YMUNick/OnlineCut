@@ -2,6 +2,7 @@
 
 import { getClip, updateClip, getTrack, MIN_FRAME } from '../core/project.js';
 import { hitTest } from '../engine/renderer.js';
+import { TextEditor } from './text-editor.js';
 import { clamp } from '../core/time.js';
 import { _t } from '../i18n.js';
 
@@ -18,7 +19,30 @@ export class Preview {
     new ResizeObserver(() => this.layout()).observe(els.viewport);
     els.overlay.addEventListener('pointerdown', (e) => this.onPointerDown(e));
     els.overlay.addEventListener('wheel', (e) => this.onWheel(e), { passive: false });
+    this.textEditor = new TextEditor({ store, player, frame: els.frame, getLayouts: () => this.layouts, getScale: () => this.scale });
   }
+
+  /**
+   * 雙擊文字：直接在畫面上修改內容與字型（上面有圖片蓋住時也找得到文字）。
+   * pointerdown 為了拖曳呼叫了 preventDefault，瀏覽器就不會送 dblclick，所以自己判斷：
+   * 0.4 秒內在差不多同一個位置按兩下。
+   */
+  isDoubleClick(e) {
+    const now = performance.now(), last = this.lastDown;
+    this.lastDown = { t: now, x: e.clientX, y: e.clientY };
+    if (!last || now - last.t > 400 || Math.hypot(e.clientX - last.x, e.clientY - last.y) > 6) return false;
+    this.lastDown = null;
+    return true;
+  }
+
+  textAt(pt) {
+    for (const [id, L] of [...this.layouts.entries()].reverse()) {
+      if (getClip(this.store.project, id)?.type === 'text' && hitTest(L, pt.x, pt.y)) return id;
+    }
+    return null;
+  }
+
+  startTextEdit(id) { return this.textEditor.start(id); }
 
   /** 讓畫面在可用空間內保持比例、置中 */
   layout() {
@@ -51,12 +75,15 @@ export class Preview {
     this.drawOverlay();
   }
 
+  get editingText() { return this.textEditor?.editingId ?? null; }
+
   toProject(e) {
     const r = this.els.overlay.getBoundingClientRect();
     return { x: (e.clientX - r.left) / this.scale, y: (e.clientY - r.top) / this.scale };
   }
 
   drawOverlay() {
+    this.textEditor?.sync();
     const ov = this.els.overlay;
     ov.innerHTML = '';
     const s = this.scale;
@@ -96,6 +123,10 @@ export class Preview {
   onPointerDown(e) {
     if (e.button !== 0) return;
     const pt = this.toProject(e);
+    if (this.isDoubleClick(e)) {
+      const id = this.textAt(pt);
+      if (id) { e.preventDefault(); this.textEditor.start(id); return; }
+    }
     const handle = e.target.closest('[data-h]')?.dataset.h;
     let clip = this.store.selectedClip;
     const insideSelected = clip && this.layouts.get(clip.id) && hitTest(this.layouts.get(clip.id), pt.x, pt.y);

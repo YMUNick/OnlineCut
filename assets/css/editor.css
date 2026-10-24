@@ -205,6 +205,10 @@ html[lang="en"] .tab .icon { display: none; }
 /* 邊框與貼圖是透明的，墊一張示意的照片底色才看得出來 */
 .graphic-grid.frame .graphic-thumb, .graphic-grid.sticker .graphic-thumb { background: linear-gradient(160deg, #6a7c93, #2c3644 70%); }
 .graphic-grid.sticker .graphic-thumb img { width: 82%; height: 82%; }
+.graphic-grid.text { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.graphic-grid.text .graphic-thumb { aspect-ratio: 8 / 5; background: linear-gradient(160deg, #6a7c93, #2c3644 70%); }
+.graphic-thumb canvas { width: 100%; height: 100%; display: block; }
+.panel-sub-hint { display: block; margin-top: 3px; font-weight: 500; letter-spacing: 0; color: var(--accent); }
 .layout-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; --lay-bg: #24272d; --lay-main: #4a5160; --lay-sub: var(--accent); --lay-line: #fff; }
 .layout-opt { padding: 10px 6px 8px; }
 .layout-opt svg { display: block; height: 44px; width: auto; }
@@ -499,3 +503,39 @@ html[lang="en"] .tab .icon { display: none; }
   .tc-total, .tc-sep { display: none; }
   .tl-zoom input, #btnZoomOut, #btnZoomIn { display: none; }
 }
+
+/* 預覽上直接編輯文字 */
+.text-edit { position: absolute; inset: 0; z-index: 6; pointer-events: none; }
+.text-edit-area {
+  position: absolute; pointer-events: auto; box-sizing: border-box; margin: 0; border: 0; resize: none; overflow: hidden;
+  white-space: pre; background: transparent; caret-color: var(--accent); paint-order: stroke fill;
+  outline: 1.5px dashed var(--accent); outline-offset: 4px; border-radius: 2px;
+}
+.text-edit-area:focus { outline-style: solid; }
+.text-edit-area::selection { background: rgba(255, 92, 57, .45); }
+.text-edit-bar {
+  position: absolute; pointer-events: auto; display: flex; align-items: center; gap: 2px; padding: 4px;
+  background: rgba(22, 24, 28, .96); border: 1px solid var(--line-2); border-radius: 10px;
+  box-shadow: 0 12px 32px -8px rgba(0, 0, 0, .7); white-space: nowrap; animation: te-in .14s var(--ease);
+}
+@keyframes te-in { from { opacity: 0; transform: translateY(4px); } }
+.text-edit-bar button {
+  height: 30px; min-width: 30px; padding: 0 8px; border: 0; border-radius: 6px; background: none; color: var(--text-2);
+  font: 600 13px/1 var(--font-sans);
+}
+.text-edit-bar button:hover { background: var(--hover); color: var(--text); }
+.text-edit-bar button.on { background: var(--accent-soft); color: var(--text); }
+.text-edit-bar button sup { font-size: 9px; margin-left: 1px; }
+.text-edit-bar .te-done { background: var(--accent); color: #fff; margin-left: 2px; }
+.text-edit-bar .te-done:hover { background: var(--accent); filter: brightness(1.08); color: #fff; }
+.text-edit-bar select {
+  height: 30px; max-width: 168px; padding: 0 6px; border: 1px solid var(--line-2); border-radius: 6px;
+  background: var(--panel-2); color: var(--text); font: 500 12.5px var(--font-sans);
+}
+.te-size { width: 40px; height: 30px; text-align: center; border: 1px solid var(--line-2); border-radius: 6px; background: var(--panel-2); color: var(--text); font: 500 12.5px var(--font-mono); }
+.te-sep { width: 1px; height: 18px; background: var(--line-2); margin: 0 4px; }
+.te-color { display: inline-flex; width: 30px; height: 30px; align-items: center; justify-content: center; border-radius: 6px; cursor: pointer; }
+.te-color:hover { background: var(--hover); }
+.te-color input { width: 20px; height: 20px; padding: 0; border: 2px solid rgba(255,255,255,.75); border-radius: 50%; overflow: hidden; cursor: pointer; background: none; }
+.te-color input::-webkit-color-swatch-wrapper { padding: 0; }
+.te-color input::-webkit-color-swatch { border: 0; border-radius: 50%; }

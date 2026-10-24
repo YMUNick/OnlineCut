@@ -2,6 +2,7 @@
 // 座標一律以「專案解析度」的像素計算；canvas 比較小時會整體縮放。
 
 import { activeClipsAt, clipOpacityAt } from '../core/project.js';
+import { TEXT_DECOS } from './text-deco.js';
 
 export const TEXT_LINE_HEIGHT = 1.25;
 export const TEXT_PAD = 0.3; // 背景框內距（字級的倍數）
@@ -9,6 +10,22 @@ export const TEXT_PAD = 0.3; // 背景框內距（字級的倍數）
 export function fontString(text, size = text.fontSize) {
   const family = text.fontFamily ? `"${text.fontFamily}", ` : '';
   return `${text.italic ? 'italic ' : ''}${text.fontWeight || 400} ${size}px ${family}"Noto Sans TC", "PingFang TC", "Microsoft JhengHei", system-ui, sans-serif`;
+}
+
+/** 文字本身（含背景框內距）的大小，未縮放 */
+export function textBox(t, measureText) {
+  const lines = String(t.content ?? '').split('\n');
+  const font = fontString(t);
+  const textW = Math.max(1, ...lines.map(l => measureText(font, l)));
+  const pad = t.background ? t.fontSize * TEXT_PAD : 0;
+  const lh = t.fontSize * TEXT_LINE_HEIGHT;
+  return { lines, pad, lh, w: textW + pad * 2, h: lines.length * lh + pad * 2 };
+}
+
+/** 文字加上外框造型之後的大小；ox / oy 是文字框中心相對於造型中心的位移（未縮放） */
+export function textOuter(t, box) {
+  const deco = TEXT_DECOS[t.deco];
+  return deco ? deco.box(box.w, box.h, t.fontSize) : { w: box.w, h: box.h, ox: 0, oy: 0 };
 }
 
 /**
@@ -26,13 +43,13 @@ export function clipLayout(project, clip, mediaInfo, measureText) {
   }
   let w, h;
   if (clip.type === 'text') {
-    const t = clip.text;
-    const lines = String(t.content ?? '').split('\n');
-    const font = fontString(t);
-    const textW = Math.max(1, ...lines.map(l => measureText(font, l)));
-    const pad = t.background ? t.fontSize * TEXT_PAD * 2 : 0;
-    w = (textW + pad) * scale;
-    h = (lines.length * t.fontSize * TEXT_LINE_HEIGHT + pad) * scale;
+    const box = textBox(clip.text, measureText);
+    const outer = textOuter(clip.text, box);
+    // text：文字框本身的位置（雙擊編輯時用來對齊輸入框）
+    return {
+      cx: W / 2 + x, cy: H / 2 + y, w: outer.w * scale, h: outer.h * scale, rotation,
+      text: { ox: outer.ox * scale, oy: outer.oy * scale, w: box.w * scale, h: box.h * scale },
+    };
   } else {
     const mw = mediaInfo?.width || W, mh = mediaInfo?.height || H;
     const fit = Math.min(W / mw, H / mh);
@@ -88,6 +105,8 @@ export function filterString(f, k = 1) {
 }
 
 const measureCache = new Map();
+/** 字型載入完成後要清掉：之前量到的是後備字型的寬度 */
+export function clearTextMeasureCache() { measureCache.clear(); }
 function makeMeasurer(ctx) {
   return (font, line) => {
     const key = font + '\u0000' + line;
@@ -108,7 +127,7 @@ function makeMeasurer(ctx) {
  * 畫一格。getSource(clip) 回傳可以 drawImage 的東西（video / image / canvas），沒有就跳過。
  * 回傳每個畫出來的片段的 layout（給預覽的選取框用）。
  */
-export function drawFrame(ctx, project, t, { getSource, getMediaInfo }) {
+export function drawFrame(ctx, project, t, { getSource, getMediaInfo, hideTextFor = null }) {
   const canvas = ctx.canvas;
   const k = canvas.width / project.width;
   const measure = makeMeasurer(ctx);
@@ -137,7 +156,7 @@ export function drawFrame(ctx, project, t, { getSource, getMediaInfo }) {
     if (layout.rotation) ctx.rotate((layout.rotation * Math.PI) / 180);
 
     if (clip.type === 'text') {
-      drawText(ctx, clip, layout);
+      drawText(ctx, clip, layout, measure, clip.id === hideTextFor);
     } else if (layout.framed) {
       ctx.filter = 'none';
       drawFramed(ctx, clip, layout, getSource(clip), getMediaInfo(clip), filter, k);
@@ -195,20 +214,27 @@ function isDrawable(src) {
   return true;
 }
 
-function drawText(ctx, clip, layout) {
+/** hideGlyphs：正在預覽上直接編輯這段文字時，只畫外框造型與背景，字由輸入框顯示 */
+function drawText(ctx, clip, layout, measure, hideGlyphs = false) {
   const t = clip.text;
   const s = clip.transform.scale;
   ctx.scale(s, s);
-  const w = layout.w / s, h = layout.h / s;
-  const lines = String(t.content ?? '').split('\n');
-  const lh = t.fontSize * TEXT_LINE_HEIGHT;
-  const pad = t.background ? t.fontSize * TEXT_PAD : 0;
+  const { lines, pad, lh, w, h } = textBox(t, measure);
+  const deco = TEXT_DECOS[t.deco];
+  if (deco) {
+    const outer = textOuter(t, { w, h });
+    ctx.save();
+    deco.draw(ctx, outer.w, outer.h, t, t.fontSize);
+    ctx.restore();
+    ctx.translate(outer.ox, outer.oy);
+  }
 
   if (t.background) {
     ctx.fillStyle = t.background;
     roundRect(ctx, -w / 2, -h / 2, w, h, Math.min(t.fontSize * 0.25, h / 2));
     ctx.fill();
   }
+  if (hideGlyphs) return;
   ctx.font = fontString(t);
   ctx.textBaseline = 'middle';
   ctx.textAlign = t.align || 'center';
@@ -216,9 +242,11 @@ function drawText(ctx, clip, layout) {
   const top = -h / 2 + pad + lh / 2;
 
   if (t.shadow) {
+    // shadowBlur 不受 transform 影響，要換算成 canvas 像素
+    const k = Math.hypot(ctx.getTransform().a, ctx.getTransform().b) || 1;
     ctx.shadowColor = 'rgba(0,0,0,.55)';
-    ctx.shadowBlur = t.fontSize * 0.12;
-    ctx.shadowOffsetY = t.fontSize * 0.04;
+    ctx.shadowBlur = t.fontSize * 0.12 * k;
+    ctx.shadowOffsetY = t.fontSize * 0.04 * k;
   }
   lines.forEach((line, i) => {
     const y = top + i * lh;
@@ -242,4 +270,20 @@ function roundRect(ctx, x, y, w, h, r) {
   ctx.arcTo(x, y + h, x, y, r);
   ctx.arcTo(x, y, x + w, y, r);
   ctx.closePath();
+}
+
+/** 文字貼圖的縮圖：用跟預覽一樣的方式畫，縮放到放得進 canvas */
+export function renderTextPreview(canvas, text, rotation = 0) {
+  const ctx = canvas.getContext('2d');
+  const measure = makeMeasurer(ctx);
+  const box = textBox(text, measure);
+  const outer = textOuter(text, box);
+  const k = Math.min(canvas.width * 0.86 / outer.w, canvas.height * 0.8 / outer.h);
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+  ctx.save();
+  ctx.translate(canvas.width / 2, canvas.height / 2);
+  ctx.rotate((rotation * Math.PI) / 180);
+  ctx.scale(k, k);
+  drawText(ctx, { text, transform: { scale: 1 } }, null, measure);
+  ctx.restore();
 }

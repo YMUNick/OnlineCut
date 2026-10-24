@@ -103,7 +103,7 @@ async function record(browser, base, lang, tmp) {
 
   await hold(0.3);
   await click('.tab[data-tab="graphics"]', 0.15);
-  await click('[data-graphic="burst"]', 0.5);
+  await click('[data-graphic="tx-burst"]', 0.5);
   await click('.tab[data-tab="layout"]', 0.1);
   // 顯示第二個畫面並套用版型（同一格裡完成，看不到中間狀態）
   await moveTo('[data-layout="circle-bl"]');

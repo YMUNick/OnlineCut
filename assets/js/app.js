@@ -6,7 +6,9 @@ import {
   DEFAULT_IMAGE_DURATION, getClip, getTrack,
 } from './core/project.js';
 import { LAYOUTS, layoutFrames, layoutCandidates, applyLayout } from './core/layouts.js';
-import { getGraphic, renderGraphic } from './graphics.js';
+import { getGraphic, renderGraphic, getTextGraphic } from './graphics.js';
+import { textBox, textOuter, clearTextMeasureCache } from './engine/renderer.js';
+import { ensureProjectFonts } from './ui/fonts.js';
 import { LayoutPanel, GraphicsPanel } from './ui/extras-panel.js';
 import { formatTimecode, clamp } from './core/time.js';
 import { Store } from './state.js';
@@ -75,6 +77,13 @@ const timeline = new Timeline({
   onScrubStart: () => player.pause(),
   onDropMedia: (mediaId, trackId, t) => addMediaToTimeline(mediaId, { trackId, start: t }),
 });
+// 雙擊時間軸上的文字片段：播放頭不在片段上就先移過去，再打開預覽上的編輯框
+timeline.onEditText = (id) => {
+  const c = getClip(store.project, id);
+  if (!c) return;
+  if (player.time < c.start || player.time >= c.start + c.duration) player.seek(c.start + Math.min(0.5, c.duration / 2));
+  preview.startTextEdit(id);
+};
 timeline.emitToast = (msg, { undo } = {}) => toast(msg, undo ? { action: { label: _t('復原'), run: () => store.undo() } } : {});
 
 const mediaPanel = new MediaPanel({
@@ -147,6 +156,18 @@ store.on('change', ({ type }) => {
   $('btnDuplicate').disabled = store.selection.length !== 1;
   $('btnSplit').disabled = !p.clips.length;
   $('aspectSelect').value = p.aspect;
+});
+
+// 文字用到的字型：用到時才載入；載入完成後重畫（量字的快取要清掉）
+let fontTimer = 0;
+store.on('change', ({ type }) => {
+  if (type === 'view') return;
+  clearTimeout(fontTimer);
+  fontTimer = setTimeout(() => ensureProjectFonts(store.project), 200);
+});
+document.fonts?.addEventListener?.('loadingdone', () => {
+  clearTextMeasureCache();
+  player.render();
 });
 
 function onTime(t) {
@@ -448,6 +469,8 @@ function applyLayoutAction(id) {
 
 /** 加入內建圖案：背景放最下面，貼圖和邊框放最上面 */
 async function addGraphic(id) {
+  const tg = getTextGraphic(id);
+  if (tg) { addTextGraphic(tg); return; }
   const g = getGraphic(id);
   if (!g) return;
   const t = player.time;
@@ -498,6 +521,40 @@ async function addGraphic(id) {
   }
   const { project, clip } = addClip(p, 'image', { mediaId: info.id, trackId: track.id, start: t, name: g.label, ...fields });
   store.commit(project, { select: [clip.id] });
+}
+
+/** 加入文字貼圖（有外框造型的文字），放在最上面的影像軌，依樣板放到畫面的角落或中間 */
+let textEditHintShown = false;
+function addTextGraphic(g) {
+  let proj = store.project;
+  const t = player.time;
+  const rest = getDuration(proj) - t;
+  const duration = rest > 0.5 ? Math.min(DEFAULT_TEXT_DURATION, rest) : DEFAULT_TEXT_DURATION;
+  let track = proj.tracks.find(tr => tr.kind === 'video' && !tr.locked);
+  const busy = track && proj.clips.some(c => c.trackId === track.id && t < c.start + c.duration && t + duration > c.start);
+  if (!track || busy) {
+    proj = addTrack(proj, 'video');
+    track = proj.tracks[0];
+  }
+  // 依實際大小放到角落（量字要用 canvas）
+  const ctx = document.createElement('canvas').getContext('2d');
+  const box = textBox(g.text, (font, line) => { ctx.font = font; return ctx.measureText(line).width; });
+  const outer = textOuter(g.text, box);
+  const W = proj.width, H = proj.height, m = Math.min(W, H) * 0.06;
+  const pos = {
+    tr: { x: W / 2 - m - outer.w / 2, y: -(H / 2 - m - outer.h / 2) },
+    bl: { x: -(W / 2 - m - outer.w / 2), y: H / 2 - m * 1.6 - outer.h / 2 },
+    bottom: { x: 0, y: H / 2 - m * 1.6 - outer.h / 2 },
+  }[g.place] ?? { x: 0, y: 0 };
+  const { project, clip } = addClip(proj, 'text', {
+    trackId: track.id, start: t, duration, name: g.label, text: { ...g.text },
+    transform: { x: Math.round(pos.x), y: Math.round(pos.y), rotation: g.rotation || 0 },
+  });
+  store.commit(project, { select: [clip.id] });
+  if (!textEditHintShown) {
+    textEditHintShown = true;
+    toast(_t('在預覽畫面上點兩下，就能直接改字、換字型'), { timeout: 6000 });
+  }
 }
 
 async function removeMediaItem(id) {

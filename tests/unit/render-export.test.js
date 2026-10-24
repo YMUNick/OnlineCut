@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { clipLayout, hitTest, filterString, fontString } from '../../assets/js/engine/renderer.js';
 import { outputSize, estimateBitrate, sanitizeFilename } from '../../assets/js/engine/exporter.js';
 import { parseColor, toRgba } from '../../assets/js/ui/inspector.js';
-import { makeClip, createProject } from '../../assets/js/core/project.js';
+import { makeClip, createProject, addClip, updateClip, normalizeProject, TEXT_DECO_IDS } from '../../assets/js/core/project.js';
 
 const near = (a, b, eps = 1e-6) => assert.ok(Math.abs(a - b) < eps, `${a} ≉ ${b}`);
 const measure = (font, line) => line.length * 10; // 假的量字：每個字 10px
@@ -121,5 +121,43 @@ describe('顏色', () => {
   test('toRgba 與 parseColor 互轉', () => {
     assert.equal(toRgba('#ff5c39', 0.5), 'rgba(255, 92, 57, 0.5)');
     assert.deepEqual(parseColor(toRgba('#123456', 0.25)), { hex: '#123456', alpha: 0.25 });
+  });
+});
+
+describe('文字的外框造型', () => {
+  const p = createProject();
+  const text = (extra) => makeClip('text', { text: { content: 'NEW', fontSize: 100, ...extra } });
+  test('造型讓範圍變大，文字框的大小不變；爆炸標是正方形', () => {
+    const plain = clipLayout(p, text({}), null, measure);
+    const burst = clipLayout(p, text({ deco: 'burst' }), null, measure);
+    assert.ok(burst.w > plain.w && burst.h > plain.h);
+    near(burst.w, burst.h);
+    assert.deepEqual([burst.text.w, burst.text.h], [plain.w, plain.h]);
+  });
+  test('對話框的文字在上方（尾巴在下面），字幕條的文字往右', () => {
+    assert.ok(clipLayout(p, text({ deco: 'bubble' }), null, measure).text.oy < 0);
+    assert.ok(clipLayout(p, text({ deco: 'lower' }), null, measure).text.ox > 0);
+  });
+  test('縮放也套用到造型與文字框的位移', () => {
+    const c = text({ deco: 'bubble' });
+    c.transform.scale = 2;
+    const a = clipLayout(p, text({ deco: 'bubble' }), null, measure), b = clipLayout(p, c, null, measure);
+    near(b.w, a.w * 2);
+    near(b.text.oy, a.text.oy * 2);
+  });
+  test('每一種造型都有大小，而且比文字大', () => {
+    for (const deco of TEXT_DECO_IDS) {
+      const L = clipLayout(p, text({ deco }), null, measure);
+      assert.ok(L.w >= L.text.w && L.h >= L.text.h && Number.isFinite(L.w), deco);
+    }
+  });
+  test('不認識的造型：讀檔時清掉，更新時也不接受', () => {
+    let q = addClip(createProject(), 'text', { text: { deco: 'burst' } });
+    const raw = JSON.parse(JSON.stringify(q.project));
+    raw.clips[0].text.deco = '<script>';
+    assert.equal(normalizeProject(raw).clips[0].text.deco, '');
+    assert.equal(normalizeProject(JSON.parse(JSON.stringify(q.project))).clips[0].text.deco, 'burst');
+    const u = updateClip(q.project, q.clip.id, { text: { deco: 'nope' } });
+    assert.equal(u.clips[0].text.deco, '');
   });
 });

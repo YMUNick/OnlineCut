@@ -1376,11 +1376,16 @@ try {
     await import('node:fs').then(fs => fs.writeFileSync(out, Buffer.from(bytes)));
     const v = probe(out).streams.find(s => s.codec_type === 'video');
     const raw = execFileSync('ffmpeg', ['-v', 'error', '-ss', String(t), '-i', out, '-frames:v', '1', '-f', 'rawvideo', '-pix_fmt', 'rgb24', '-']);
-    return (fx, fy) => {
+    const rgbAt = (fx, fy) => {
       const i = (Math.floor(v.height * fy) * v.width + Math.floor(v.width * fx)) * 3;
-      const [r, g, b] = [raw[i], raw[i + 1], raw[i + 2]];
+      return [raw[i], raw[i + 1], raw[i + 2]];
+    };
+    const at = (fx, fy) => {
+      const [r, g, b] = rgbAt(fx, fy);
       return r > b + 80 ? 'red' : b > r + 80 ? 'blue' : `rgb(${r},${g},${b})`;
     };
+    at.rgb = rgbAt;
+    return at;
   }
 
   await test('左右分割：下面的軌是左邊的主畫面，預覽與匯出一致', async () => {
@@ -1503,7 +1508,7 @@ try {
     const tracksBefore = (await state()).project.tracks.filter(t => t.kind === 'video').length;
     await page.evaluate(() => window.__oc.player.seek(0));
     await page.click('.tab[data-tab="graphics"]');
-    assert.equal(await page.locator('.graphic-opt').count(), 26);
+    assert.equal(await page.locator('.graphic-opt').count(), 45, '11 個文字貼圖 + 34 個圖案');
     await page.click('[data-graphic="sunset"]');
     await waitFor(async () => (await state()).project.clips.length === 2, 5000, '背景');
     let s = await state();
@@ -1540,6 +1545,95 @@ try {
     // 換成直式：背景與邊框的縮圖依新的比例重畫
     await page.selectOption('#aspectSelect', '9:16');
     await waitFor(() => page.evaluate(() => decodeURIComponent(document.querySelector('[data-graphic="mint"] img').src).includes('width="1080" height="1920"')), 3000, '直式縮圖');
+  });
+
+  console.log('\n文字貼圖與直接編輯文字');
+  /** 文字片段在預覽畫面上的螢幕座標（文字框中心） */
+  const textCenter = (id) => page.evaluate((id) => {
+    const L = window.__oc.player.layouts.get(id);
+    const r = document.getElementById('overlay').getBoundingClientRect();
+    const k = r.width / window.__oc.store.project.width;
+    return { x: r.left + (L.cx + L.text.ox) * k, y: r.top + (L.cy + L.text.oy) * k };
+  }, id);
+
+  await test('文字貼圖：加入後是有外框造型、可以改字的文字片段', async () => {
+    await setupFadeClip();
+    await page.evaluate(() => window.__oc.player.seek(1));
+    await page.click('.tab[data-tab="graphics"]');
+    await page.click('[data-graphic="tx-bubble"]');
+    await waitFor(async () => (await state()).project.clips.some(c => c.type === 'text'), 3000, '加入');
+    const c = (await state()).project.clips.find(c => c.type === 'text');
+    assert.equal(c.text.deco, 'bubble');
+    assert.equal(c.text.content, 'WOW!');
+    assert.deepEqual((await state()).selection, [c.id]);
+    assert.equal(await page.inputValue('.insp-section select >> nth=1'), 'bubble', '屬性面板的外框造型');
+    // 換造型
+    await page.selectOption('.insp-section select >> nth=1', 'note');
+    assert.equal((await state()).project.clips.find(x => x.id === c.id).text.deco, 'note');
+    await page.selectOption('.insp-section select >> nth=1', 'bubble');
+  });
+
+  await test('在預覽上點兩下文字：直接改字、換字型、調字級，Esc 結束', async () => {
+    const id = (await state()).project.clips.find(c => c.type === 'text').id;
+    await page.waitForTimeout(200);
+    const pt = await textCenter(id);
+    await page.mouse.dblclick(pt.x, pt.y);
+    await page.waitForSelector('.text-edit-area', { timeout: 3000 });
+    assert.equal(await page.evaluate(() => document.activeElement?.classList.contains('text-edit-area')), true, '輸入框拿到焦點');
+    assert.equal(await page.evaluate(() => window.__oc.player.hideTextFor != null), true, '畫面上的字先藏起來，由輸入框顯示');
+    await page.keyboard.press('Control+a');
+    await page.keyboard.type('Hello 你好');
+    const text = async () => (await state()).project.clips.find(c => c.id === id).text;
+    assert.equal((await text()).content, 'Hello 你好');
+    await page.keyboard.press('Shift+Enter');
+    await page.keyboard.type('第二行');
+    assert.equal((await text()).content, 'Hello 你好\n第二行', 'Enter 換行');
+    // 打字時不能觸發快捷鍵（S 分割、Delete 刪除…）
+    await page.keyboard.type('s');
+    assert.equal((await state()).project.clips.length, 2, '沒有被分割');
+    await page.selectOption('.te-font', 'Bebas Neue');
+    assert.equal((await text()).fontFamily, 'Bebas Neue');
+    const size = (await text()).fontSize;
+    await page.click('.text-edit-bar [data-act="bigger"]');
+    assert.ok((await text()).fontSize > size, '字變大');
+    await page.click('.text-edit-bar [data-act="bold"]');
+    assert.equal((await text()).fontWeight, 400, '取消粗體');
+    await page.keyboard.press('Escape');
+    await waitFor(async () => (await page.locator('.text-edit').count()) === 0, 2000, '結束編輯');
+    assert.equal(await page.evaluate(() => window.__oc.player.hideTextFor), null);
+    assert.deepEqual((await state()).selection, [id], 'Esc 只結束編輯，不取消選取');
+  });
+
+  await test('點在編輯框外面也會結束；在時間軸上點兩下文字片段也能編輯', async () => {
+    const id = (await state()).project.clips.find(c => c.type === 'text').id;
+    await page.evaluate(() => window.__oc.player.seek(3.9)); // 播放頭在文字片段外面
+    const box = await clipBox(id);
+    await page.mouse.dblclick(box.x + box.width / 2, box.y + box.height / 2);
+    await page.waitForSelector('.text-edit-area', { timeout: 3000 });
+    const t = (await state()).time;
+    const c = (await state()).project.clips.find(c => c.id === id);
+    assert.ok(t >= c.start && t < c.start + c.duration, `播放頭移到片段上 ${t}`);
+    await page.keyboard.type('!');
+    await page.mouse.click(5, 5); // 畫面左上角（編輯框外面）
+    await waitFor(async () => (await page.locator('.text-edit').count()) === 0, 2000, '結束編輯');
+    assert.match((await state()).project.clips.find(c => c.id === id).text.content, /!$/);
+  });
+
+  await test('匯出：外框造型畫得出來', async () => {
+    await newProjectUI();
+    await page.click('.tab[data-tab="graphics"]');
+    await page.click('[data-graphic="tx-burst"]');
+    await waitFor(async () => (await state()).project.clips.length === 1, 3000, '加入');
+    const L = await page.evaluate(() => {
+      const c = window.__oc.store.project.clips[0];
+      const L = window.__oc.player.layouts.get(c.id);
+      return { cx: L.cx / 1920, cy: L.cy / 1080, r: L.w / 2 / 1920 };
+    });
+    const at = await exportedColors('text-deco', 1);
+    // 星形的身體（文字下方）是黃色，畫面角落是黑色
+    const [r, g, b] = at.rgb(L.cx, L.cy + L.r * 0.62 * 1920 / 1080);
+    assert.ok(r > 180 && g > 150 && b < 120, `星形是黃色：${[r, g, b]}`);
+    assert.ok(at.rgb(0.05, 0.9).every(v => v < 30), '角落是黑色背景');
   });
 
   console.log('\n英文版');
