@@ -102,3 +102,17 @@ describe('audioPlan：每一段要播哪些聲音', () => {
     near(piece.srcEnd, 1803);
   });
 });
+
+describe('影片的聲音另外淡入淡出', () => {
+  test('匯出混音用的是聲音的淡入淡出，不是畫面的', () => {
+    let p = project();
+    const r = P.addClip(p, 'video', { mediaId: 'v', duration: 10, fadeIn: 3 });
+    p = P.updateClip(r.project, r.clip.id, { audioFades: { in: 0, out: 2 } });
+    const c = P.getClip(p, r.clip.id);
+    const pts = gainPoints(c, 0, 10);
+    near(gainAt(pts, 1), 1);       // 畫面在淡入，聲音沒有
+    near(gainAt(pts, 9), 0.5);     // 聲音在淡出
+    near(gainAt(pts, 10), 0);
+    for (let t = 0; t <= 10; t += 0.25) near(gainAt(pts, t), P.clipGainAt(p, c, Math.min(t, 9.999999)), 1e-5);
+  });
+});

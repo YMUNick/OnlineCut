@@ -369,7 +369,7 @@ html[lang="en"] .tab .icon { display: none; }
 .clip.selected { box-shadow: inset 0 0 0 2px var(--accent), 0 0 0 1px var(--accent), 0 4px 14px -4px rgba(255,92,57,.6); z-index: 2; }
 .clip canvas.clip-bg { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; }
 .clip-label {
-  position: absolute; left: 0; top: 0; max-width: 100%; padding: 3px 8px 4px; font-size: 11px; font-weight: 600; color: #fff; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  position: absolute; left: 0; top: 0; max-width: 100%; padding: 3px 8px 4px 20px; font-size: 11px; font-weight: 600; color: #fff; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
   text-shadow: 0 1px 2px rgba(0,0,0,.7); pointer-events: none; display: flex; align-items: center; gap: 5px;
 }
 .clip-label .icon { width: 12px; height: 12px; opacity: .9; }
@@ -384,6 +384,23 @@ html[lang="en"] .tab .icon { display: none; }
 .clip-fade { position: absolute; top: 0; bottom: 0; pointer-events: none; }
 .clip-fade.in { left: 0; background: linear-gradient(to top right, rgba(0,0,0,.45) 50%, transparent 50%); }
 .clip-fade.out { right: 0; background: linear-gradient(to top left, rgba(0,0,0,.45) 50%, transparent 50%); }
+/* 影片：上面是畫面的淡入淡出，下方波形區是聲音的 */
+.clip.av .clip-fade { bottom: 28%; }
+.clip-afade { display: none; position: absolute; top: 72%; bottom: 0; pointer-events: none; }
+.clip.av .clip-afade { display: block; }
+.clip-afade.in { left: 0; background: linear-gradient(to top right, rgba(0,0,0,.55) 50%, transparent 50%); }
+.clip-afade.out { right: 0; background: linear-gradient(to top left, rgba(0,0,0,.55) 50%, transparent 50%); }
+/* 淡入淡出的把手：滑過或選取時出現 */
+.fade-dot {
+  position: absolute; top: 3px; width: 11px; height: 11px; margin-left: -5.5px; border-radius: 50%; z-index: 3; cursor: ew-resize;
+  background: #fff; box-shadow: 0 0 0 1.5px rgba(0,0,0,.55), 0 1px 3px rgba(0,0,0,.5); opacity: 0; transition: opacity var(--dur), transform var(--dur);
+}
+.fade-dot.audio { display: none; top: auto; bottom: 3px; background: #7ff0ae; }
+.clip.av .fade-dot.audio { display: block; }
+.clip:hover .fade-dot, .clip.selected .fade-dot { opacity: 1; }
+.fade-dot:hover { transform: scale(1.25); }
+.clip.narrow .fade-dot { display: none !important; }
+.fade-tip { position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%); z-index: 6; pointer-events: none; white-space: nowrap; background: rgba(10,11,13,.85); color: #fff; font-size: 11px; font-weight: 600; padding: 3px 8px; border-radius: 4px; }
 
 .tl-playhead { position: absolute; top: 0; bottom: 0; width: 0; z-index: 4; pointer-events: none; will-change: transform; }
 .tl-playhead::before { content: ''; position: absolute; top: 0; bottom: 0; left: -1px; width: 2px; background: var(--accent); }

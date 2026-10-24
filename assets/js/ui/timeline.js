@@ -2,7 +2,7 @@
 
 import {
   clipEnd, getClip, getTrack, canHost, moveClip, placeClip, trimClip, mediaLimit, snapPoints, snapClipStart, snapTime,
-  getDuration, sourceTime, TRACK_KIND_FOR_TYPE, updateTrack, removeTrack,
+  getDuration, sourceTime, TRACK_KIND_FOR_TYPE, updateTrack, removeTrack, updateClip, audioFadesOf,
 } from '../core/project.js';
 import { rulerStep, formatRulerLabel, clamp } from '../core/time.js';
 import { icon } from './icons.js';
@@ -136,7 +136,8 @@ export class Timeline {
       if (!el) {
         el = document.createElement('div');
         el.dataset.clipId = c.id;
-        el.innerHTML = `<canvas class="clip-bg"></canvas><div class="clip-fade in"></div><div class="clip-fade out"></div><div class="clip-label"></div><div class="clip-handle l" data-edge="start"></div><div class="clip-handle r" data-edge="end"></div>`;
+        el.innerHTML = `<canvas class="clip-bg"></canvas><div class="clip-fade in"></div><div class="clip-fade out"></div><div class="clip-afade in"></div><div class="clip-afade out"></div><div class="clip-label"></div><div class="clip-handle l" data-edge="start"></div><div class="clip-handle r" data-edge="end"></div>`
+          + `<span class="fade-dot" data-fade="in"></span><span class="fade-dot" data-fade="out"></span><span class="fade-dot audio" data-fade="in" data-audio></span><span class="fade-dot audio" data-fade="out" data-audio></span>`;
         this.clipEls.set(c.id, el);
       }
       el.className = `clip ${c.type}${sel.has(c.id) ? ' selected' : ''}`;
@@ -148,6 +149,24 @@ export class Timeline {
       el.classList.toggle('tiny', w < 18);
       el.querySelector('.clip-fade.in').style.width = `${c.fadeIn * this.pps}px`;
       el.querySelector('.clip-fade.out').style.width = `${c.fadeOut * this.pps}px`;
+      // 影片下方的波形區：聲音的淡入淡出（可能跟畫面不同）
+      const av = c.type === 'video' && this.runtime.get(c.mediaId)?.hasAudio !== false;
+      el.classList.toggle('av', av);
+      const af = audioFadesOf(c);
+      el.querySelector('.clip-afade.in').style.width = `${af.in * this.pps}px`;
+      el.querySelector('.clip-afade.out').style.width = `${af.out * this.pps}px`;
+      // 淡入淡出的小圓點：離邊緣至少 12px，才不會跟修剪把手搶
+      const dotX = (sec) => Math.max(12, sec * this.pps);
+      const [pin, pout, ain, aout] = el.querySelectorAll('.fade-dot');
+      const linked = c.type === 'video' && c.audioFades == null;
+      pin.style.left = `${dotX(c.fadeIn)}px`;
+      pout.style.left = `${w - dotX(c.fadeOut)}px`;
+      ain.style.left = `${dotX(af.in)}px`;
+      aout.style.left = `${w - dotX(af.out)}px`;
+      pin.title = c.type === 'video' && !linked ? _t('拖曳調整畫面淡入') : _t('拖曳調整淡入');
+      pout.title = c.type === 'video' && !linked ? _t('拖曳調整畫面淡出') : _t('拖曳調整淡出');
+      ain.title = _t('拖曳調整聲音淡入（只有聲音）');
+      aout.title = _t('拖曳調整聲音淡出（只有聲音）');
       const label = c.type === 'text' ? (c.text.content.split('\n')[0] || _t('文字')) : (c.name || p.media[c.mediaId]?.name || c.type);
       const speed = c.speed !== 1 ? `<span class="speed">${c.speed}×</span>` : '';
       const muted = c.muted ? icon('volumeOff') : '';
@@ -417,6 +436,8 @@ export class Timeline {
       if (!this.store.selection.includes(id)) this.store.select(id);
       const track = getTrack(this.store.project, clip.trackId);
       if (track?.locked) return;
+      const dot = e.target.closest('.fade-dot');
+      if (dot) { this.beginFade(e, clip, dot.dataset.fade, 'audio' in dot.dataset); return; }
       const edge = e.target.closest('.clip-handle')?.dataset.edge;
       if (edge) this.beginTrim(e, clip, edge);
       else this.beginMove(e, clip);
@@ -516,6 +537,38 @@ export class Timeline {
     else msg = fromMedia && Math.abs(c.srcIn + c.duration * c.speed - mediaLimit(next, c)) < 1e-3 ? _t('已經是素材的結尾，不能再往右拉長') : _t('後面有其他片段擋住');
     this.emitToast?.(_t('{reason}。要移動整段片段，請按住片段中間拖曳。', { reason: msg }));
     return true;
+  }
+
+  /** 拖曳片段上方（或影片波形上）的小圓點，調整淡入 / 淡出的長度 */
+  beginFade(e, clip, side, audio) {
+    const base = this.store.project;
+    const session = Math.random().toString(36).slice(2);
+    const from = audio ? audioFadesOf(clip)[side] : side === 'in' ? clip.fadeIn : clip.fadeOut;
+    const x0 = e.clientX;
+    const linked = clip.type !== 'video' || clip.audioFades == null;
+    const label = audio
+      ? (side === 'in' ? _t('聲音淡入') : _t('聲音淡出'))
+      : clip.type === 'video' && !linked ? (side === 'in' ? _t('畫面淡入') : _t('畫面淡出')) : (side === 'in' ? _t('淡入') : _t('淡出'));
+    const tip = document.createElement('div');
+    tip.className = 'fade-tip';
+    this.clipEls.get(clip.id)?.appendChild(tip);
+    const move = (ev) => {
+      let v = from + (side === 'in' ? 1 : -1) * (ev.clientX - x0) / this.pps;
+      v = clamp(Math.round(v * 20) / 20, 0, clip.duration);
+      const patch = audio ? { audioFades: { [side]: v } } : { [side === 'in' ? 'fadeIn' : 'fadeOut']: v };
+      this.store.commit(updateClip(base, clip.id, patch), { key: `fade-${session}` });
+      tip.textContent = `${label} ${v.toFixed(1)}s`;
+      // 重新繪製時片段元素可能被換位置，提示跟著放回去
+      const el = this.clipEls.get(clip.id);
+      if (el && tip.parentNode !== el) el.appendChild(tip);
+    };
+    this.drag = { type: 'fade' };
+    window.addEventListener('pointermove', move);
+    this.onDragEnd(() => {
+      window.removeEventListener('pointermove', move);
+      tip.remove();
+      this.drag = null;
+    });
   }
 
   beginMove(e, clip) {

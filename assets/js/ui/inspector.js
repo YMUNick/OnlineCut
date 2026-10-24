@@ -1,6 +1,6 @@
 // 右側屬性面板：專案設定 / 片段屬性
 
-import { updateClip, renameProject, setAspect, ASPECT_PRESETS, getDuration, clipEnd, canFrame, MIN_FRAME } from '../core/project.js';
+import { updateClip, renameProject, setAspect, ASPECT_PRESETS, getDuration, clipEnd, canFrame, MIN_FRAME, audioFadesOf } from '../core/project.js';
 import { formatTimecode, formatDuration, clamp } from '../core/time.js';
 import { icon } from './icons.js';
 import { escapeHtml } from './dialogs.js';
@@ -356,8 +356,27 @@ export class Inspector {
       s.appendChild(this.slider(_t('不透明'), { min: 0, max: 100, step: 1, unit: '%', get: c => Math.round(c.opacity * 100), set: v => ({ opacity: v / 100 }), key: 'opacity' }));
     }
     const maxFade = (c) => Math.max(0.1, Math.min(10, c.duration));
-    s.appendChild(this.slider(_t('淡入'), { min: 0, max: maxFade, step: 0.1, unit: 's', decimals: 1, get: c => c.fadeIn, set: v => ({ fadeIn: v }), key: 'fadeIn' }));
-    s.appendChild(this.slider(_t('淡出'), { min: 0, max: maxFade, step: 0.1, unit: 's', decimals: 1, get: c => c.fadeOut, set: v => ({ fadeOut: v }), key: 'fadeOut' }));
+    const video = clip.type === 'video';
+    s.appendChild(this.slider(video ? _t('畫面淡入') : _t('淡入'), { min: 0, max: maxFade, step: 0.1, unit: 's', decimals: 1, get: c => c.fadeIn, set: v => ({ fadeIn: v }), key: 'fadeIn', hardMax: 600 }));
+    s.appendChild(this.slider(video ? _t('畫面淡出') : _t('淡出'), { min: 0, max: maxFade, step: 0.1, unit: 's', decimals: 1, get: c => c.fadeOut, set: v => ({ fadeOut: v }), key: 'fadeOut', hardMax: 600 }));
+    s.insertAdjacentHTML('beforeend', `<p class="hint-line">${_t('也可以直接拖曳時間軸上片段上方角落的小圓點。')}</p>`);
+  }
+
+  /** 影片片段：聲音的淡入淡出可以跟著畫面，也可以分開設定 */
+  buildAudioFades(s) {
+    const maxFade = (c) => Math.max(0.1, Math.min(10, c.duration));
+    const linked = document.createElement('input');
+    linked.type = 'checkbox';
+    linked.onchange = () => this.commit(c => ({ audioFades: linked.checked ? null : { in: c.fadeIn, out: c.fadeOut } }), 'afLink');
+    this.bind(linked, c => { linked.checked = c.audioFades == null; });
+    const lbl = document.createElement('label');
+    lbl.className = 'check';
+    lbl.append(linked, document.createTextNode(_t('聲音跟著畫面淡入淡出')));
+    s.appendChild(this.row('', lbl, true));
+    // 調整聲音的淡入淡出會自動改成分開設定
+    s.appendChild(this.slider(_t('聲音淡入'), { min: 0, max: maxFade, step: 0.1, unit: 's', decimals: 1, get: c => audioFadesOf(c).in, set: v => ({ audioFades: { in: v } }), key: 'afIn', hardMax: 600 }));
+    s.appendChild(this.slider(_t('聲音淡出'), { min: 0, max: maxFade, step: 0.1, unit: 's', decimals: 1, get: c => audioFadesOf(c).out, set: v => ({ audioFades: { out: v } }), key: 'afOut', hardMax: 600 }));
+    s.insertAdjacentHTML('beforeend', `<p class="hint-line" style="margin-top:0">${_t('拖曳時間軸波形上的小圓點也可以調整。只調聲音時，畫面不會跟著淡出。')}</p>`);
   }
 
   buildFilters() {
@@ -399,6 +418,7 @@ export class Inspector {
     lbl.className = 'check';
     lbl.append(mute, document.createTextNode(_t('靜音這個片段')));
     s.appendChild(this.row('', lbl, true));
+    if (clip.type === 'video' && item?.hasAudio !== false) this.buildAudioFades(s);
 
     const speeds = [0.5, 1, 1.5, 2];
     const chips = document.createElement('div');

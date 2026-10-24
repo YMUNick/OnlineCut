@@ -536,3 +536,64 @@ describe('placeClip（時間軸拖曳放下）', () => {
     assert.equal(P.getClip(P.placeClip(p, B, { start: -50 }), B).start, 0);
   });
 });
+
+describe('聲音的淡入淡出（影片片段可以跟畫面分開）', () => {
+  const vclip = () => {
+    const r = P.addClip(setup(), 'video', { mediaId: 'mv' });
+    return { p: r.project, id: r.clip.id };
+  };
+  test('預設跟著畫面：調畫面淡出，聲音也一起淡出', () => {
+    let { p, id } = vclip();
+    p = P.updateClip(p, id, { fadeOut: 2 });
+    const c = P.getClip(p, id);
+    assert.equal(c.audioFades, null);
+    assert.deepEqual(P.audioFadesOf(c), { in: 0, out: 2 });
+    near(P.clipGainAt(p, c, 9), 0.5);
+    near(P.clipOpacityAt(c, 9), 0.5);
+  });
+  test('分開設定：只有聲音淡出，畫面不變', () => {
+    let { p, id } = vclip();
+    p = P.updateClip(p, id, { audioFades: { out: 4 } });
+    const c = P.getClip(p, id);
+    assert.deepEqual(c.audioFades, { in: 0, out: 4 });
+    near(P.clipGainAt(p, c, 8), 0.5);
+    assert.equal(P.clipOpacityAt(c, 8), 1);
+    // 之後改畫面的淡入淡出，聲音不受影響
+    p = P.updateClip(p, id, { fadeIn: 1 });
+    assert.deepEqual(P.getClip(p, id).audioFades, { in: 0, out: 4 });
+  });
+  test('分開時以目前的設定為起點；設成 null 又跟回畫面', () => {
+    let { p, id } = vclip();
+    p = P.updateClip(p, id, { fadeIn: 1.5, fadeOut: 1 });
+    p = P.updateClip(p, id, { audioFades: { out: 3 } });
+    assert.deepEqual(P.getClip(p, id).audioFades, { in: 1.5, out: 3 });
+    p = P.updateClip(p, id, { audioFades: null });
+    assert.deepEqual(P.audioFadesOf(P.getClip(p, id)), { in: 1.5, out: 1 });
+  });
+  test('不能超過片段長度；修剪、分割之後也會修正', () => {
+    let { p, id } = vclip();
+    p = P.updateClip(p, id, { audioFades: { in: 99, out: -3 } });
+    assert.deepEqual(P.getClip(p, id).audioFades, { in: 10, out: 0 });
+    p = P.trimClip(p, id, 'end', 4);
+    assert.equal(P.getClip(p, id).audioFades.in, 4);
+    p = P.updateClip(p, id, { audioFades: { in: 1, out: 1 } });
+    const { project, rightId } = P.splitClip(p, id, 2);
+    assert.deepEqual(P.getClip(project, id).audioFades, { in: 1, out: 0 }, '分割點不淡出');
+    assert.deepEqual(P.getClip(project, rightId).audioFades, { in: 0, out: 1 }, '分割點不淡入');
+  });
+  test('音訊、圖片、文字片段沒有另外的聲音淡入淡出', () => {
+    const r = P.addClip(setup(), 'audio', { mediaId: 'ma', audioFades: { in: 2 } });
+    assert.equal(r.clip.audioFades, null);
+    assert.equal(P.getClip(P.updateClip(r.project, r.clip.id, { audioFades: { in: 2 } }), r.clip.id).audioFades, null);
+  });
+  test('存檔讀回：正常的不變，壞掉的修正，舊存檔是 null', () => {
+    let { p, id } = vclip();
+    p = P.updateClip(p, id, { audioFades: { in: 0.5, out: 2 } });
+    assert.deepEqual(P.normalizeProject(JSON.parse(JSON.stringify(p))), p);
+    const raw = JSON.parse(JSON.stringify(p));
+    raw.clips[0].audioFades = { in: 'x', out: 1e9 };
+    assert.deepEqual(P.normalizeProject(raw).clips[0].audioFades, { in: 0, out: 10 });
+    delete raw.clips[0].audioFades;
+    assert.equal(P.normalizeProject(raw).clips[0].audioFades, null);
+  });
+});

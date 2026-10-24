@@ -42,6 +42,11 @@ export function violations(p) {
     if (!(c.speed >= P.MIN_SPEED && c.speed <= P.MAX_SPEED)) out.push(`${tag} speed=${c.speed}`);
     if (!(c.fadeIn >= 0 && c.fadeIn <= c.duration + EPS)) out.push(`${tag} fadeIn=${c.fadeIn}`);
     if (!(c.fadeOut >= 0 && c.fadeOut <= c.duration + EPS)) out.push(`${tag} fadeOut=${c.fadeOut}`);
+    if (c.audioFades !== null) {
+      const a = c.audioFades;
+      if (c.type !== 'video') out.push(`${tag} 不能有獨立的聲音淡入淡出`);
+      else if (!(a.in >= 0 && a.in <= c.duration + EPS && a.out >= 0 && a.out <= c.duration + EPS)) out.push(`${tag} audioFades=${JSON.stringify(a)}`);
+    }
     if (!(c.opacity >= 0 && c.opacity <= 1)) out.push(`${tag} opacity=${c.opacity}`);
     if (!(c.volume >= 0 && c.volume <= 2)) out.push(`${tag} volume=${c.volume}`);
     for (const v of [c.start, c.duration, c.srcIn, c.transform.x, c.transform.y, c.transform.scale, c.transform.rotation]) {
@@ -83,7 +88,7 @@ function randomStep(p, r) {
   const pick = (arr) => arr[Math.floor(r() * arr.length)];
   const clip = p.clips.length ? pick(p.clips) : null;
   const t = r() * 30 - 2;
-  const op = Math.floor(r() * 15);
+  const op = Math.floor(r() * 16);
   switch (op) {
     case 0: case 1: {
       const m = pick(Object.values(p.media));
@@ -102,6 +107,7 @@ function randomStep(p, r) {
       return applyLayout(p, layoutCandidates(p, clip ? [clip.id] : [], t, 4).map(c => c.id), id).project;
     }
     case 12: return clip ? P.updateClip(p, clip.id, { frame: pick([null, { x: r() * 3 - 1, w: r() * 3 - 0.5, shape: pick(['circle', 'x', 1]) }, { border: pick([NaN, -5, 1e9, 4]) }, 'junk']) }) : p;
+    case 14: return clip ? P.updateClip(p, clip.id, { audioFades: pick([null, { in: r() * 12 }, { out: r() * 12 - 2 }, { in: NaN, out: 'x' }]) }) : p;
     case 13: return clip ? P.placeClip(p, clip.id, { start: t, trackId: r() < 0.3 ? pick(p.tracks).id : undefined, closeGap: r() < 0.5 }) : p;
     case 10: return r() < 0.5 ? P.addTrack(p, pick(['video', 'audio'])) : P.removeTrack(p, pick(p.tracks).id);
     default: return P.updateTrack(p, pick(p.tracks).id, { locked: r() < 0.2, hidden: r() < 0.2, muted: r() < 0.2 });

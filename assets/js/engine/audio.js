@@ -1,7 +1,7 @@
 // 聲音：依需要只解碼用到的那一段，不把整個檔案讀進記憶體。
 // 混音也分段進行（預設每 30 秒一段），記憶體用量跟時間軸長度與檔案大小都無關。
 
-import { getTrack, clipEnd, fadeFactor } from '../core/project.js';
+import { getTrack, clipEnd, audioFadesOf, audioFadeFactor } from '../core/project.js';
 import { loadMediabunny, canStreamAudio } from './mb.js';
 import { _t } from '../i18n.js';
 
@@ -20,14 +20,15 @@ export function audibleClips(project) {
 export function gainPoints(clip, a, b) {
   const s = clip.start, e = clipEnd(clip);
   const v = Math.min(2, Math.max(0, clip.volume));
+  const f = audioFadesOf(clip);
   const ts = new Set([a, b]);
-  if (clip.fadeIn > 0) ts.add(s + clip.fadeIn);
-  if (clip.fadeOut > 0) ts.add(e - clip.fadeOut);
+  if (f.in > 0) ts.add(s + f.in);
+  if (f.out > 0) ts.add(e - f.out);
   // 淡入淡出重疊時，兩條線的交點也是轉折點
-  if (clip.fadeIn > 0 && clip.fadeOut > 0 && clip.fadeIn + clip.fadeOut > clip.duration) {
-    ts.add((s * clip.fadeOut + e * clip.fadeIn) / (clip.fadeIn + clip.fadeOut));
+  if (f.in > 0 && f.out > 0 && f.in + f.out > clip.duration) {
+    ts.add((s * f.out + e * f.in) / (f.in + f.out));
   }
-  return [...ts].filter(t => t >= a && t <= b).sort((x, y) => x - y).map(t => [t, v * fadeFactor(clip, t)]);
+  return [...ts].filter(t => t >= a && t <= b).sort((x, y) => x - y).map(t => [t, v * audioFadeFactor(clip, t)]);
 }
 
 /**

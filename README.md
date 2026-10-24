@@ -39,7 +39,7 @@ Most online editors make you **upload gigabytes of footage**, **sign up**, and t
 | 🪟 **Picture-in-picture & split screen** | One-click layouts: PiP in any corner, circle cam, side by side, top/bottom, three-way and 2×2. Adjust shape, border and shadow, and reframe inside the frame. |
 | 🎨 **Built-in graphics** | 10 backgrounds, 9 stickers and 7 frames (Polaroid, film strip, cinematic bars, neon, viewfinder…). All vector, so they stay sharp at any size. |
 | 🔤 **Titles & captions** | Six text presets, any font size, weight, color, box, outline and shadow. Drag, scale and rotate right on the preview. |
-| 🎛️ **Filters, speed & fades** | Brightness, contrast, saturation, B&W and blur with presets; 0.25×–4× speed; video and audio fades; volume up to 200%. |
+| 🎛️ **Filters, speed & fades** | Brightness, contrast, saturation, B&W and blur with presets; 0.25×–4× speed; volume up to 200%; fades you drag right on the timeline, with separate audio fades for video clips (e.g. let the music fade out while the picture stays). |
 | 📐 **Any aspect ratio** | 16:9, 9:16 (Reels / Shorts / TikTok), 1:1 and 4:5. Portrait footage switches the canvas automatically. |
 | 📦 **Frame-accurate MP4 export** | H.264 + AAC up to 1080p 60 fps, rendered frame by frame with WebCodecs, usually faster than real time. |
 | 🐘 **Huge files welcome** | Large files aren't copied into the browser, and audio is streamed, so memory use doesn't grow with file size. |

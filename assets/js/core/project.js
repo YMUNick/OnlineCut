@@ -129,10 +129,12 @@ export function makeClip(type, fields = {}) {
     transform: { x: 0, y: 0, scale: 1, rotation: 0 },
     filters: { brightness: 100, contrast: 100, saturation: 100, blur: 0, grayscale: 0 },
     frame: null,
+    audioFades: null,
   };
   if (type === 'text') clip.text = defaultText();
-  const { transform, filters, text, frame, ...rest } = fields;
+  const { transform, filters, text, frame, audioFades, ...rest } = fields;
   Object.assign(clip, rest);
+  if (audioFades && hasSeparateAudioFades(clip)) clip.audioFades = { in: Math.max(0, num(audioFades.in, 0)), out: Math.max(0, num(audioFades.out, 0)) };
   if (frame && canFrame(clip)) clip.frame = cleanFrame(frame);
   if (transform) Object.assign(clip.transform, transform);
   if (filters) Object.assign(clip.filters, filters);
@@ -201,6 +203,28 @@ export function fadeFactor(clip, t) {
   return clamp(f, 0, 1);
 }
 
+/**
+ * 影片片段的聲音淡入淡出。audioFades 是 null 時跟著畫面（fadeIn / fadeOut）；
+ * 是 { in, out } 時聲音另外設定。音訊片段只有一組（fadeIn / fadeOut 就是聲音的）。
+ */
+export const hasSeparateAudioFades = (c) => c?.type === 'video';
+
+export function audioFadesOf(clip) {
+  return clip.audioFades ?? { in: clip.fadeIn, out: clip.fadeOut };
+}
+
+export function audioFadeFactor(clip, t) {
+  const f = audioFadesOf(clip);
+  return fadeFactor({ start: clip.start, duration: clip.duration, fadeIn: f.in, fadeOut: f.out }, t);
+}
+
+/** 淡入淡出不能超過片段長度（修剪、分割、變速之後都要檢查） */
+function clampFades(c) {
+  c.fadeIn = clamp(Number(c.fadeIn) || 0, 0, c.duration);
+  c.fadeOut = clamp(Number(c.fadeOut) || 0, 0, c.duration);
+  if (c.audioFades) c.audioFades = { in: clamp(Number(c.audioFades.in) || 0, 0, c.duration), out: clamp(Number(c.audioFades.out) || 0, 0, c.duration) };
+}
+
 export function clipOpacityAt(clip, t) {
   return clamp(clip.opacity, 0, 1) * fadeFactor(clip, t);
 }
@@ -208,7 +232,7 @@ export function clipOpacityAt(clip, t) {
 export function clipGainAt(project, clip, t) {
   const track = getTrack(project, clip.trackId);
   if (clip.muted || !track || track.muted) return 0;
-  return clamp(clip.volume, 0, 2) * fadeFactor(clip, t);
+  return clamp(clip.volume, 0, 2) * audioFadeFactor(clip, t);
 }
 
 // ============================================================
@@ -410,8 +434,7 @@ export function trimClip(project, id, edge, time) {
       const latest = Math.min(nextStart, c.start + (limit - c.srcIn) / c.speed);
       c.duration = clamp(time, c.start + minDur, latest) - c.start;
     }
-    c.fadeIn = Math.min(c.fadeIn, c.duration);
-    c.fadeOut = Math.min(c.fadeOut, c.duration);
+    clampFades(c);
   });
 }
 
@@ -432,8 +455,10 @@ export function splitClip(project, id, t) {
     right.fadeIn = 0;
     left.duration = t - left.start;
     left.fadeOut = 0;
-    left.fadeIn = Math.min(left.fadeIn, left.duration);
-    right.fadeOut = Math.min(right.fadeOut, right.duration);
+    // 分割點不淡入淡出（聲音也一樣）
+    if (left.audioFades) { left.audioFades.out = 0; right.audioFades.in = 0; }
+    clampFades(left);
+    clampFades(right);
     p.clips.push(right);
   });
   return { project: next, rightId };
@@ -488,7 +513,7 @@ export function updateClip(project, id, patch) {
   if (!getClip(project, id)) return project;
   return produce(project, p => {
     const c = getClip(p, id);
-    const { transform, filters, text, speed, frame, ...rest } = patch;
+    const { transform, filters, text, speed, frame, audioFades, ...rest } = patch;
     for (const [k, v] of Object.entries(rest)) {
       if (['id', 'type', 'mediaId', 'trackId', 'start', 'duration', 'srcIn'].includes(k)) continue;
       c[k] = v;
@@ -496,6 +521,9 @@ export function updateClip(project, id, patch) {
     // frame: null 取消畫面框；物件則跟目前的框合併
     if (frame === null) c.frame = null;
     else if (frame && canFrame(c)) c.frame = cleanFrame({ ...(c.frame ?? defaultFrame()), ...frame });
+    // audioFades: null 讓聲音跟著畫面；物件則從目前的聲音淡入淡出改起（也就是分開設定）
+    if (audioFades === null) c.audioFades = null;
+    else if (audioFades && hasSeparateAudioFades(c)) c.audioFades = { ...audioFadesOf(c), ...audioFades };
     if (transform) Object.assign(c.transform, transform);
     if (filters) Object.assign(c.filters, filters);
     if (text && c.text) Object.assign(c.text, text);
@@ -522,8 +550,7 @@ export function updateClip(project, id, patch) {
         c.duration = duration;
       }
     }
-    c.fadeIn = clamp(Number(c.fadeIn) || 0, 0, c.duration);
-    c.fadeOut = clamp(Number(c.fadeOut) || 0, 0, c.duration);
+    clampFades(c);
   });
 }
 
@@ -626,6 +653,9 @@ function sanitizeClip(c) {
     rotation: clamp(num(t.rotation, 0), -360, 360),
   };
   m.frame = canFrame(m) ? cleanFrame(c.frame) : null;
+  const af = c.audioFades;
+  m.audioFades = hasSeparateAudioFades(m) && af && typeof af === 'object' && !Array.isArray(af)
+    ? { in: Math.max(0, num(af.in, 0)), out: Math.max(0, num(af.out, 0)) } : null;
   const f = c.filters && typeof c.filters === 'object' ? c.filters : {};
   m.filters = {
     brightness: clamp(num(f.brightness, 100), 0, 200),
@@ -705,8 +735,9 @@ export function normalizeProject(raw) {
       if (m.srcIn + m.duration * m.speed > limit + 1e-6) m.duration = (limit - m.srcIn) / m.speed;
     }
     if (!(m.duration > 0)) continue;
-    m.fadeIn = clamp(num(m.fadeIn, 0), 0, m.duration);
-    m.fadeOut = clamp(num(m.fadeOut, 0), 0, m.duration);
+    m.fadeIn = num(m.fadeIn, 0);
+    m.fadeOut = num(m.fadeOut, 0);
+    clampFades(m);
     clipIds.add(m.id);
     p.clips.push(m);
   }

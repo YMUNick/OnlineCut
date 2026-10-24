@@ -1258,6 +1258,84 @@ try {
     assert.equal((await state()).project.clips.find(c => c.id === red.id).start, 0);
   });
 
+  console.log('\n淡入淡出');
+  /** 新專案：一段 4 秒、有 440Hz 聲音的影片，時間軸放大到看得清楚 */
+  async function setupFadeClip() {
+    await newProjectUI();
+    await page.setInputFiles('#fileInput', [fx.video]);
+    await waitFor(async () => (await state()).project.clips.length === 1, 10000, '匯入');
+    const id = (await state()).project.clips[0].id;
+    await page.evaluate((id) => { window.__oc.store.select([id]); window.__oc.timeline.fit(); }, id);
+    await page.waitForTimeout(200);
+    return id;
+  }
+  const dragDot = async (sel, dxSec) => {
+    const pps = await page.evaluate(() => window.__oc.store.pxPerSec);
+    const b = await page.locator(sel).boundingBox();
+    const x = b.x + b.width / 2, y = b.y + b.height / 2;
+    await page.mouse.move(x, y);
+    await page.mouse.down();
+    await page.mouse.move(x + dxSec * pps / 2, y, { steps: 4 });
+    await page.mouse.move(x + dxSec * pps, y, { steps: 4 });
+    await page.mouse.up();
+  };
+
+  await test('拖曳片段上方的小圓點調整淡入，聲音跟著畫面一起', async () => {
+    const id = await setupFadeClip();
+    await dragDot(`.clip[data-clip-id="${id}"] .fade-dot[data-fade="in"]:not(.audio)`, 1);
+    const c = (await state()).project.clips[0];
+    assert.ok(Math.abs(c.fadeIn - 1) < 0.15, `淡入 ${c.fadeIn}`);
+    assert.equal(c.audioFades, null, '聲音跟著畫面');
+    assert.equal(c.start, 0, '片段沒有被移動');
+    assert.ok(Math.abs(c.duration - 4) < 0.1, '片段沒有被修剪');
+    await page.keyboard.press('Control+z');
+    assert.equal((await state()).project.clips[0].fadeIn, 0, '一次就能復原');
+  });
+
+  await test('拖曳波形上的小圓點只調聲音淡出；勾回「跟著畫面」就恢復', async () => {
+    const id = await setupFadeClip();
+    await dragDot(`.clip[data-clip-id="${id}"] .fade-dot.audio[data-fade="out"]`, -1.5);
+    let c = (await state()).project.clips[0];
+    assert.ok(Math.abs(c.audioFades.out - 1.5) < 0.15, `聲音淡出 ${JSON.stringify(c.audioFades)}`);
+    assert.equal(c.fadeOut, 0, '畫面不淡出');
+    const box = page.locator('label.check', { hasText: '聲音跟著畫面淡入淡出' }).locator('input');
+    assert.equal(await box.isChecked(), false);
+    await box.check();
+    c = (await state()).project.clips[0];
+    assert.equal(c.audioFades, null);
+    // 在屬性面板輸入聲音淡入，也會改成分開設定
+    const num = page.locator('.field', { hasText: '聲音淡入' }).locator('.num');
+    await num.fill('0.8');
+    await num.press('Enter');
+    c = (await state()).project.clips[0];
+    assert.deepEqual(c.audioFades, { in: 0.8, out: 0 });
+    assert.equal(await box.isChecked(), false);
+  });
+
+  await test('匯出：只有聲音淡出，畫面維持原本的亮度', async () => {
+    const id = await setupFadeClip();
+    await page.evaluate(async (id) => {
+      const P = await import('./assets/js/core/project.js');
+      const s = window.__oc.store;
+      s.commit(P.updateClip(s.project, id, { audioFades: { in: 0, out: 2 } }));
+    }, id);
+    const bytes = await page.evaluate(async () => {
+      const { exportVideo } = await import('./assets/js/engine/exporter.js');
+      const r = await exportVideo({ project: window.__oc.store.project, runtime: window.__oc.runtime, settings: { short: 360 } });
+      return Array.from(new Uint8Array(await r.blob.arrayBuffer()));
+    });
+    const out = path.join(tmp, 'audio-fade.mp4');
+    await import('node:fs').then(fs => fs.writeFileSync(out, Buffer.from(bytes)));
+    const loud = meanVolume(out, 0.3, 0.8), quiet = meanVolume(out, 3.5, 0.4);
+    assert.ok(loud - quiet > 10, `開頭 ${loud} dB，結尾 ${quiet} dB（應該小聲很多）`);
+    const yavg = (ss) => {
+      const r = spawnSync('ffmpeg', ['-hide_banner', '-ss', String(ss), '-i', out, '-frames:v', '1', '-vf', 'signalstats,metadata=print:key=lavfi.signalstats.YAVG', '-f', 'null', '-'], { encoding: 'utf8' });
+      return parseFloat(r.stderr.match(/YAVG=([\d.]+)/)?.[1]);
+    };
+    const start = yavg(0.5), end = yavg(3.8);
+    assert.ok(end > start * 0.85, `畫面亮度：開頭 ${start}，結尾 ${end}（不應該變暗）`);
+  });
+
   console.log('\n雙畫面版型與圖案');
   /** 紅色影片在 V1、藍色影片在上面一條軌，兩段從 0 開始重疊 */
   async function setupTwoCams() {
