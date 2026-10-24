@@ -1,0 +1,35 @@
+name: Live site check
+
+# 對已部署的 GitHub Pages 網站跑完整的端到端測試
+on:
+  deployment_status:
+  workflow_dispatch:
+
+jobs:
+  e2e-live:
+    # 只在 Pages 部署成功後執行
+    if: github.event_name == 'workflow_dispatch' || (github.event.deployment_status.state == 'success' && github.event.deployment.environment == 'github-pages')
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '22'
+      - name: Install ffmpeg
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends ffmpeg
+      - name: Install Playwright
+        run: |
+          npm install --no-save playwright@1.63.0
+          npx playwright install --with-deps chromium
+      - name: Wait for the site
+        run: |
+          for i in $(seq 1 30); do
+            curl -sf "https://${{ github.repository_owner }}.github.io/${{ github.event.repository.name }}/editor.html" -o /dev/null && exit 0
+            sleep 10
+          done
+          exit 1
+      - name: End-to-end tests against the live site
+        env:
+          BASE_URL: https://${{ github.repository_owner }}.github.io/${{ github.event.repository.name }}
+        run: npm run test:e2e

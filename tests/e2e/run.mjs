@@ -3,6 +3,7 @@
 //
 // 需要：playwright（含 chromium）、ffmpeg / ffprobe
 // 執行：node tests/e2e/run.mjs
+// 測試已部署的網站：BASE_URL=https://ymunick.github.io/OnlineCut node tests/e2e/run.mjs
 
 import { chromium } from 'playwright';
 import { createServer } from 'node:http';
@@ -80,8 +81,10 @@ async function makeFixtures(dir) {
 // ----------------------------------------------------------------
 const tmp = await mkdtemp(path.join(tmpdir(), 'onlinecut-e2e-'));
 const fx = await makeFixtures(tmp);
-const server = await serve();
-const BASE = `http://127.0.0.1:${server.address().port}`;
+// 有 BASE_URL 時直接測那個網址（例如 GitHub Pages），否則在本機起一個靜態伺服器
+const server = process.env.BASE_URL ? null : await serve();
+const BASE = process.env.BASE_URL ? process.env.BASE_URL.replace(/\/+$/, '') : `http://127.0.0.1:${server.address().port}`;
+console.log(`測試網址：${BASE}`);
 const browser = await chromium.launch();
 const context = await browser.newContext({ viewport: { width: 1440, height: 900 }, acceptDownloads: true });
 const page = await context.newPage();
@@ -343,7 +346,7 @@ try {
 
   await test('匯出預設檔名用專案名稱（中文）', async () => {
     const name = await page.evaluate(async () => {
-      const { sanitizeFilename } = await import('/assets/js/engine/exporter.js');
+      const { sanitizeFilename } = await import('./assets/js/engine/exporter.js');
       return sanitizeFilename(window.__oc.store.project.name);
     });
     assert.equal(name, '未命名專案');
@@ -382,8 +385,8 @@ try {
 
   await test('只有圖片和文字（沒有聲音）也能匯出', async () => {
     const res = await page.evaluate(async () => {
-      const { exportVideo } = await import('/assets/js/engine/exporter.js');
-      const P = await import('/assets/js/core/project.js');
+      const { exportVideo } = await import('./assets/js/engine/exporter.js');
+      const P = await import('./assets/js/core/project.js');
       let p = P.createProject({ aspect: '9:16' });
       p = P.addClip(p, 'text', { duration: 1.5, text: { content: '只有文字' } }).project;
       const r = await exportVideo({ project: p, runtime: window.__oc.runtime, settings: { short: 360, fps: 24 } });
@@ -397,8 +400,8 @@ try {
 
   await test('空的時間軸不能匯出', async () => {
     const msg = await page.evaluate(async () => {
-      const { exportVideo } = await import('/assets/js/engine/exporter.js');
-      const P = await import('/assets/js/core/project.js');
+      const { exportVideo } = await import('./assets/js/engine/exporter.js');
+      const P = await import('./assets/js/core/project.js');
       try { await exportVideo({ project: P.createProject(), runtime: window.__oc.runtime }); return 'no error'; } catch (e) { return e.message; }
     });
     assert.match(msg, /空的/);
@@ -406,7 +409,7 @@ try {
 
   await test('取消匯出', async () => {
     const msg = await page.evaluate(async () => {
-      const { exportVideo } = await import('/assets/js/engine/exporter.js');
+      const { exportVideo } = await import('./assets/js/engine/exporter.js');
       const ctrl = new AbortController();
       setTimeout(() => ctrl.abort(), 50);
       try {
@@ -419,8 +422,8 @@ try {
 
   await test('備援：MediaRecorder 即時錄製 WebM', async () => {
     const res = await page.evaluate(async () => {
-      const { exportVideo } = await import('/assets/js/engine/exporter.js');
-      const P = await import('/assets/js/core/project.js');
+      const { exportVideo } = await import('./assets/js/engine/exporter.js');
+      const P = await import('./assets/js/core/project.js');
       const src = window.__oc.store.project;
       const vid = Object.values(src.media).find(m => m.type === 'video');
       let p = P.createProject();
@@ -437,8 +440,8 @@ try {
 
   await test('瀏覽器不能編碼音訊時改用即時錄製，不會輸出沒有聲音的影片', async () => {
     const res = await page.evaluate(async () => {
-      const { exportVideo, detectExportSupport } = await import('/assets/js/engine/exporter.js');
-      const P = await import('/assets/js/core/project.js');
+      const { exportVideo, detectExportSupport } = await import('./assets/js/engine/exporter.js');
+      const P = await import('./assets/js/core/project.js');
       const tone = Object.values(window.__oc.store.project.media).find(m => m.type === 'audio');
       let p = P.createProject();
       p = P.addMedia(p, tone);
@@ -477,7 +480,7 @@ try {
       return { top: px(0.25), bottom: px(0.75) };
     });
     const res = await page.evaluate(async () => {
-      const { exportVideo } = await import('/assets/js/engine/exporter.js');
+      const { exportVideo } = await import('./assets/js/engine/exporter.js');
       const r = await exportVideo({ project: window.__oc.store.project, runtime: window.__oc.runtime, settings: { short: 360 } });
       return Array.from(new Uint8Array(await r.blob.arrayBuffer()));
     });
@@ -565,7 +568,7 @@ try {
   }
 } finally {
   await browser.close();
-  server.close();
+  server?.close();
   await rm(tmp, { recursive: true, force: true });
 }
 
