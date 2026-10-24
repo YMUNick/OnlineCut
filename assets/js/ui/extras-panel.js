@@ -4,6 +4,7 @@ import { LAYOUTS, layoutFrames, matchLayout } from '../core/layouts.js';
 import { GRAPHICS, GRAPHIC_CATEGORIES, renderGraphic } from '../graphics.js';
 import { escapeHtml } from './dialogs.js';
 import { icon } from './icons.js';
+import { _t } from '../i18n.js';
 
 /** 版型的小示意圖 */
 function layoutDiagram(id, W, H) {
@@ -38,11 +39,11 @@ export class LayoutPanel {
       const group = (g, title) => `<h4 class="panel-sub">${title}</h4><div class="layout-grid">${LAYOUTS.filter(l => l.group === g).map(l => `
         <button class="layout-opt" data-layout="${l.id}" title="${l.label}">${layoutDiagram(l.id, p.width, p.height)}<small>${l.label}</small></button>`).join('')}</div>`;
       this.el.innerHTML = `
-        <p class="panel-note">把兩段影片放在<b>上下兩條影像軌</b>、時間重疊，選取其中一段（或把播放頭停在那裡）再點版型。<b>下面那條軌</b>是主畫面。</p>
-        ${group('pip', '子母畫面')}
-        ${group('split', '分割畫面')}
-        <button class="ghost-btn layout-cancel" data-layout="none">${icon('close', 'icon-sm')}取消版型（回到原本的大小）</button>
-        <p class="panel-note" style="margin-top:14px">套用後可以在右側調整形狀、邊框、陰影；在預覽上拖曳移動、拉角落改大小，按住 <kbd>Alt</kbd> 拖曳或用滾輪調整框裡的取景。</p>`;
+        <p class="panel-note">${_t('把兩段影片放在<b>上下兩條影像軌</b>、時間重疊，選取其中一段（或把播放頭停在那裡）再點版型。<b>下面那條軌</b>是主畫面。')}</p>
+        ${group('pip', _t('子母畫面'))}
+        ${group('split', _t('分割畫面'))}
+        <button class="ghost-btn layout-cancel" data-layout="none">${icon('close', 'icon-sm')}${_t('取消版型（回到原本的大小）')}</button>
+        <p class="panel-note" style="margin-top:14px">${_t('套用後可以在右側調整形狀、邊框、陰影；在預覽上拖曳移動、拉角落改大小，按住 <kbd>Alt</kbd> 拖曳或用滾輪調整框裡的取景。')}</p>`;
     }
     this.el.querySelectorAll('.layout-opt').forEach(b => b.classList.toggle('on', b.dataset.layout === current));
   }
@@ -68,10 +69,10 @@ export class GraphicsPanel {
       const art = renderGraphic(g, p.width, p.height);
       return `<img alt="" draggable="false" src="data:image/svg+xml;charset=utf-8,${encodeURIComponent(art.svg)}">`;
     };
-    this.el.innerHTML = `<p class="panel-note">點一下加到播放頭的位置。背景會放在最下面，貼圖和邊框放在最上面。</p>`
+    this.el.innerHTML = `<p class="panel-note">${_t('點一下加到播放頭的位置。背景會放在最下面，貼圖和邊框放在最上面。')}</p>`
       + GRAPHIC_CATEGORIES.map(cat => `<h4 class="panel-sub">${cat.label}</h4>
         <div class="graphic-grid ${cat.id}" style="--ratio:${p.width}/${p.height}">${GRAPHICS.filter(g => g.category === cat.id).map(g => `
-          <button class="graphic-opt" data-graphic="${g.id}" title="加入「${escapeHtml(g.label)}」"><span class="graphic-thumb">${thumb(g)}</span><small>${escapeHtml(g.label)}</small></button>`).join('')}
+          <button class="graphic-opt" data-graphic="${g.id}" title="${_t('加入「{name}」', { name: escapeHtml(g.label) })}"><span class="graphic-thumb">${thumb(g)}</span><small>${escapeHtml(g.label)}</small></button>`).join('')}
         </div>`).join('');
   }
 }

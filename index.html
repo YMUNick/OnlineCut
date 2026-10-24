@@ -3,12 +3,28 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
+  <script>
+    // 英文版：翻譯完成前先不顯示，避免閃一下中文（萬一腳本出錯，1.5 秒後照樣顯示）
+    (function () {
+      try {
+        var q = new URLSearchParams(location.search).get('lang'), s = localStorage.getItem('onlinecut.lang');
+        var l = q || s || (navigator.languages && navigator.languages[0]) || navigator.language || '';
+        if (!/^zh/i.test(l)) {
+          document.documentElement.classList.add('i18n-pending');
+          setTimeout(function () { document.documentElement.classList.remove('i18n-pending'); }, 1500);
+        }
+      } catch (e) { /* 照常顯示 */ }
+    })();
+  </script>
+  <style>html.i18n-pending body { visibility: hidden; }</style>
   <title>OnlineCut · 免費線上影片剪輯器</title>
   <meta name="description" content="打開瀏覽器就能剪影片：多軌時間軸、文字字幕、濾鏡、變速、淡入淡出，匯出 MP4。免費、免註冊、沒有浮水印，檔案不會上傳。">
   <meta name="theme-color" content="#faf7f2">
   <meta property="og:title" content="OnlineCut · 免費線上影片剪輯器">
   <meta property="og:description" content="免費、免安裝、檔案不上傳。打開瀏覽器就能剪出好影片。">
   <meta property="og:image" content="assets/img/editor-preview.jpg">
+  <link rel="alternate" hreflang="zh-Hant" href="https://ymunick.github.io/OnlineCut/?lang=zh-TW">
+  <link rel="alternate" hreflang="en" href="https://ymunick.github.io/OnlineCut/?lang=en">
   <link rel="icon" href="assets/img/favicon.svg" type="image/svg+xml">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -254,5 +270,12 @@
       <a href="https://github.com/YMUNick/OnlineCut">GitHub 原始碼</a>
     </div>
   </footer>
+  <script type="module">
+    import { translateDom, languageSwitch, isEn } from './assets/js/i18n.js';
+    translateDom();
+    if (isEn) document.querySelector('.hero img').src = 'assets/img/editor-preview-en.jpg';
+    document.querySelector('.nav-inner > .btn').before(languageSwitch('lang-btn'));
+    document.documentElement.classList.remove('i18n-pending');
+  </script>
 </body>
 </html>

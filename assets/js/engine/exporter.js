@@ -9,12 +9,13 @@ import { drawFrame, fontString } from './renderer.js';
 import { Player } from './player.js';
 import { loadMediabunny } from './mb.js';
 import { AudioSources, mixChunks, projectHasAudio, audibleClips } from './audio.js';
+import { _t } from '../i18n.js';
 
 export { loadMediabunny };
 
 export const SAMPLE_RATE = 48000;
 export const RESOLUTIONS = [
-  { id: 'source', label: '原始', short: null },
+  { id: 'source', label: _t('原始'), short: null },
   { id: '1080', label: '1080p', short: 1080 },
   { id: '720', label: '720p', short: 720 },
   { id: '480', label: '480p', short: 480 },
@@ -38,7 +39,7 @@ export function sanitizeFilename(name) {
   return (String(name || 'OnlineCut').replace(/[\\/:*?"<>|\u0000-\u001f]+/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 80) || 'OnlineCut');
 }
 
-class Aborted extends Error { constructor() { super('已取消匯出'); this.name = 'AbortError'; } }
+class Aborted extends Error { constructor() { super(_t('已取消匯出')); this.name = 'AbortError'; } }
 const check = (signal) => { if (signal?.aborted) throw new Aborted(); };
 
 // ============================================================
@@ -232,9 +233,9 @@ class FrameSources {
 
 function waitFor(el, event, timeout) {
   return new Promise((resolve, reject) => {
-    const t = setTimeout(() => { cleanup(); reject(new Error('讀取影片畫面逾時')); }, timeout);
+    const t = setTimeout(() => { cleanup(); reject(new Error(_t('讀取影片畫面逾時'))); }, timeout);
     const ok = () => { cleanup(); resolve(); };
-    const bad = () => { cleanup(); reject(new Error('影片無法解碼')); };
+    const bad = () => { cleanup(); reject(new Error(_t('影片無法解碼'))); };
     function cleanup() { clearTimeout(t); el.removeEventListener(event, ok); el.removeEventListener('error', bad); }
     el.addEventListener(event, ok, { once: true });
     el.addEventListener('error', bad, { once: true });
@@ -251,9 +252,9 @@ function waitFor(el, event, timeout) {
  */
 export async function exportVideo({ project, runtime, settings = {}, onProgress = () => {}, signal }) {
   const duration = getDuration(project);
-  if (duration <= 0) throw new Error('時間軸是空的，沒有東西可以匯出');
+  if (duration <= 0) throw new Error(_t('時間軸是空的，沒有東西可以匯出'));
   const missing = project.clips.filter(c => c.mediaId && !runtime.has(c.mediaId));
-  if (missing.length) throw new Error('有素材檔案遺失，請先重新匯入');
+  if (missing.length) throw new Error(_t('有素材檔案遺失，請先重新匯入'));
 
   const fps = settings.fps || project.fps;
   const quality = settings.quality || 'high';
@@ -288,7 +289,7 @@ export async function exportVideo({ project, runtime, settings = {}, onProgress 
 
 async function exportWebCodecs({ mb, project, runtime, sources, duration, fps, width, height, bitrate, audioCodec, onProgress, onWarning, signal }) {
   const videoCodec = await mb.getFirstEncodableVideoCodec(['avc'], { width, height, quality: new mb.Quality({ bitrate }) });
-  if (!videoCodec) throw new Error('這個瀏覽器無法編碼 H.264 影片');
+  if (!videoCodec) throw new Error(_t('這個瀏覽器無法編碼 H.264 影片'));
 
   const target = new mb.BufferTarget();
   const output = new mb.Output({ format: new mb.Mp4OutputFormat({ fastStart: 'in-memory' }), target });
@@ -342,7 +343,7 @@ async function exportWebCodecs({ mb, project, runtime, sources, duration, fps, w
 
 async function exportRecorder({ project, runtime, duration, fps, width, height, bitrate, audio, onProgress, signal }) {
   const mime = pickRecorderMime();
-  if (!mime) throw new Error('這個瀏覽器不支援影片匯出，請改用最新版 Chrome、Edge 或 Safari');
+  if (!mime) throw new Error(_t('這個瀏覽器不支援影片匯出，請改用最新版 Chrome、Edge 或 Safari'));
   const canvas = Object.assign(document.createElement('canvas'), { width, height });
   const stream = canvas.captureStream(fps);
   let actx = null, src = null;

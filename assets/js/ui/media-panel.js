@@ -4,17 +4,18 @@ import { formatDuration } from '../core/time.js';
 import { icon } from './icons.js';
 import { escapeHtml } from './dialogs.js';
 import { dragPayload } from './timeline.js';
+import { _t } from '../i18n.js';
 
 const TYPE_ICON = { video: 'film', image: 'image', audio: 'music' };
-const TYPE_LABEL = { video: '影片', image: '圖片', audio: '音訊' };
+const TYPE_LABEL = { video: _t('影片'), image: _t('圖片'), audio: _t('音訊') };
 
 export const TEXT_PRESETS = [
-  { id: 'title', label: '大標題', sample: '大標題', text: { fontSize: 140, fontWeight: 900, color: '#ffffff', shadow: true } },
-  { id: 'subtitle', label: '副標題', sample: '副標題文字', text: { fontSize: 72, fontWeight: 400, color: '#ffffff', shadow: true } },
-  { id: 'caption', label: '字幕', sample: '這是一行字幕', text: { fontSize: 56, fontWeight: 700, color: '#ffffff', background: 'rgba(0,0,0,0.6)', shadow: false }, transform: { y: 400 } },
-  { id: 'tag', label: '重點標籤', sample: 'NEW', text: { fontSize: 64, fontWeight: 900, color: '#ffffff', background: '#ff5c39', shadow: false } },
-  { id: 'outline', label: '描邊大字', sample: '描邊大字', text: { fontSize: 120, fontWeight: 900, color: '#ffd23f', strokeColor: '#000000', strokeWidth: 8, shadow: false } },
-  { id: 'serif', label: '襯線引言', sample: '「慢慢來，比較快」', text: { fontSize: 84, fontWeight: 700, fontFamily: 'Noto Serif TC', color: '#f7efe2', shadow: true } },
+  { id: 'title', label: _t('大標題'), sample: _t('大標題'), text: { fontSize: 140, fontWeight: 900, color: '#ffffff', shadow: true } },
+  { id: 'subtitle', label: _t('副標題'), sample: _t('副標題文字'), text: { fontSize: 72, fontWeight: 400, color: '#ffffff', shadow: true } },
+  { id: 'caption', label: _t('字幕'), sample: _t('這是一行字幕'), text: { fontSize: 56, fontWeight: 700, color: '#ffffff', background: 'rgba(0,0,0,0.6)', shadow: false }, transform: { y: 400 } },
+  { id: 'tag', label: _t('重點標籤'), sample: 'NEW', text: { fontSize: 64, fontWeight: 900, color: '#ffffff', background: '#ff5c39', shadow: false } },
+  { id: 'outline', label: _t('描邊大字'), sample: _t('描邊大字'), text: { fontSize: 120, fontWeight: 900, color: '#ffd23f', strokeColor: '#000000', strokeWidth: 8, shadow: false } },
+  { id: 'serif', label: _t('襯線引言'), sample: _t('「慢慢來，比較快」'), text: { fontSize: 84, fontWeight: 700, fontFamily: 'Noto Serif TC', color: '#f7efe2', shadow: true } },
 ];
 
 export function formatBytes(n) {
@@ -59,7 +60,7 @@ export class MediaPanel {
         t.strokeWidth ? `-webkit-text-stroke:${Math.max(1, t.strokeWidth / 4)}px ${t.strokeColor};paint-order:stroke fill` : '',
         t.shadow ? 'text-shadow:0 2px 6px rgba(0,0,0,.6)' : '',
       ].filter(Boolean).join(';');
-      return `<button class="text-preset" data-preset="${p.id}" title="加入「${p.label}」"><span><span style="${style}">${escapeHtml(p.sample)}</span><small>${p.label}</small></span></button>`;
+      return `<button class="text-preset" data-preset="${p.id}" title="${_t('加入「{name}」', { name: p.label })}"><span><span style="${style}">${escapeHtml(p.sample)}</span><small>${p.label}</small></span></button>`;
     }).join('');
     els.textPresets.addEventListener('click', (e) => {
       const id = e.target.closest('[data-preset]')?.dataset.preset;
@@ -107,7 +108,7 @@ export class MediaPanel {
   addLoading(key, name) {
     const card = document.createElement('div');
     card.className = 'media-card loading';
-    card.innerHTML = `<div class="media-thumb">${icon('upload')}</div><div class="media-meta"><div class="media-name"></div><div class="media-sub">讀取中…</div></div>`;
+    card.innerHTML = `<div class="media-thumb">${icon('upload')}</div><div class="media-meta"><div class="media-name"></div><div class="media-sub">${_t('讀取中…')}</div></div>`;
     card.querySelector('.media-name').textContent = name;
     this.els.grid.prepend(card);
     this.loading.set(key, card);
@@ -142,11 +143,11 @@ export class MediaPanel {
           <div class="media-visual">
             <div class="media-thumb">${icon(TYPE_ICON[m.type], 'icon-lg')}</div>
             <span class="media-badge"></span>
-            <span class="media-missing">${icon('alert', 'icon-sm')}需要重新匯入</span>
+            <span class="media-missing">${icon('alert', 'icon-sm')}${_t('需要重新匯入')}</span>
           </div>
           <div class="media-actions">
-            <button data-act="add" title="加到播放頭位置" aria-label="加到時間軸">${icon('plus')}</button>
-            <button data-act="remove" title="從專案移除" aria-label="移除素材">${icon('trash')}</button>
+            <button data-act="add" title="${_t('加到播放頭位置')}" aria-label="${_t('加到時間軸')}">${icon('plus')}</button>
+            <button data-act="remove" title="${_t('從專案移除')}" aria-label="${_t('移除素材')}">${icon('trash')}</button>
           </div>
           <div class="media-meta"><div class="media-name"></div><div class="media-sub"></div></div>`;
         card.addEventListener('keydown', (e) => { if (e.key === 'Enter') this.onAdd(m.id); });
@@ -158,8 +159,8 @@ export class MediaPanel {
       card.title = m.name;
       const dims = m.width ? `${m.width}×${m.height}` : '';
       const missing = !this.runtime.has(m.id);
-      if (missing) card.title = `${m.name}\n檔案遺失：重新匯入同一個檔案（同名、同大小）就會自動接回`;
-      card.querySelector('.media-sub').textContent = missing ? '檔案遺失' : [TYPE_LABEL[m.type], dims, formatBytes(m.size)].filter(Boolean).join(' · ');
+      if (missing) card.title = `${m.name}\n${_t('檔案遺失：重新匯入同一個檔案（同名、同大小）就會自動接回')}`;
+      card.querySelector('.media-sub').textContent = missing ? _t('檔案遺失') : [TYPE_LABEL[m.type], dims, formatBytes(m.size)].filter(Boolean).join(' · ');
       card.classList.toggle('used', used.has(m.id));
       card.classList.toggle('missing', missing);
       // 依新增時間排序（loading 卡片保留在最前面）

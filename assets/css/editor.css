@@ -92,6 +92,9 @@
 
 /* 下拉選單 */
 .menu-wrap { position: relative; }
+.lang-btn { font-size: 12px; font-weight: 700; letter-spacing: .04em; }
+/* 英文標籤比較長：分頁只顯示文字 */
+html[lang="en"] .tab .icon { display: none; }
 .ghost-btn .caret { opacity: .6; margin-left: -2px; }
 .menu {
   position: absolute; right: 0; top: calc(100% + 6px); z-index: 60; min-width: 240px; padding: 6px;

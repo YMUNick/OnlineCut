@@ -4,6 +4,7 @@
 // 時間單位：秒。tracks 依畫面由上到下排列；越上面的影像軌疊在越上層。
 
 import { clamp, DEFAULT_FPS } from './time.js';
+import { _t } from '../i18n.js';
 
 export const PROJECT_VERSION = 1;
 export const MIN_SPEED = 0.25;
@@ -12,10 +13,10 @@ export const DEFAULT_IMAGE_DURATION = 5;
 export const DEFAULT_TEXT_DURATION = 4;
 
 export const ASPECT_PRESETS = {
-  '16:9': { width: 1920, height: 1080, label: '橫式 16:9', hint: 'YouTube' },
-  '9:16': { width: 1080, height: 1920, label: '直式 9:16', hint: 'Reels / Shorts / TikTok' },
-  '1:1': { width: 1080, height: 1080, label: '方形 1:1', hint: 'Instagram 貼文' },
-  '4:5': { width: 1080, height: 1350, label: '直式 4:5', hint: 'Instagram 動態' },
+  '16:9': { width: 1920, height: 1080, label: _t('橫式 16:9'), hint: 'YouTube' },
+  '9:16': { width: 1080, height: 1920, label: _t('直式 9:16'), hint: 'Reels / Shorts / TikTok' },
+  '1:1': { width: 1080, height: 1080, label: _t('方形 1:1'), hint: _t('Instagram 貼文') },
+  '4:5': { width: 1080, height: 1350, label: _t('直式 4:5'), hint: _t('Instagram 動態') },
 };
 
 export const TRACK_KIND_FOR_TYPE = { video: 'video', image: 'video', text: 'video', audio: 'audio' };
@@ -38,7 +39,7 @@ export function produce(project, fn) {
 // ============================================================
 // 建立
 // ============================================================
-export function createProject({ name = '未命名專案', aspect = '16:9', fps = DEFAULT_FPS } = {}) {
+export function createProject({ name = _t('未命名專案'), aspect = '16:9', fps = DEFAULT_FPS } = {}) {
   const preset = ASPECT_PRESETS[aspect] ?? ASPECT_PRESETS['16:9'];
   return {
     version: PROJECT_VERSION,
@@ -65,7 +66,7 @@ export function makeTrack(kind, name) {
 
 export function defaultText() {
   return {
-    content: '輸入標題文字',
+    content: _t('輸入標題文字'),
     fontFamily: 'Noto Sans TC',
     fontSize: 96,
     fontWeight: 700,
@@ -567,7 +568,7 @@ export function setAspect(project, aspect) {
 }
 
 export function renameProject(project, name) {
-  return produce(project, p => { p.name = String(name).slice(0, 120) || '未命名專案'; });
+  return produce(project, p => { p.name = String(name).slice(0, 120) || _t('未命名專案'); });
 }
 
 // ============================================================
@@ -589,7 +590,7 @@ const isSafeId = (id) => typeof id === 'string' && SAFE_ID.test(id) && !RESERVED
 
 function sanitizeMedia(id, m) {
   if (!isSafeId(id) || !m || typeof m !== 'object' || m.id !== id || !MEDIA_TYPES.includes(m.type)) return null;
-  const out = { id, type: m.type, name: str(m.name, '素材', 255) };
+  const out = { id, type: m.type, name: str(m.name, _t('素材'), 255) };
   if (m.size !== undefined) out.size = Math.max(0, num(m.size, 0));
   if (m.mime !== undefined) out.mime = str(m.mime, '', 100);
   if (m.addedAt !== undefined) out.addedAt = num(m.addedAt, 0);

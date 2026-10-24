@@ -1,10 +1,11 @@
+import { _t } from './i18n.js';
 // 內建圖案：背景、貼圖、邊框裝飾。全部是即時產生的 SVG，不用下載、放大也清楚。
 // 背景與邊框依專案解析度產生；貼圖固定 512×512、背景透明。
 
 export const GRAPHIC_CATEGORIES = [
-  { id: 'bg', label: '背景' },
-  { id: 'sticker', label: '貼圖' },
-  { id: 'frame', label: '邊框裝飾' },
+  { id: 'bg', label: _t('背景') },
+  { id: 'sticker', label: _t('貼圖') },
+  { id: 'frame', label: _t('邊框裝飾') },
 ];
 
 export const STICKER_SIZE = 512;
@@ -60,21 +61,21 @@ const sparkle = (cx, cy, r) =>
 // ============================================================
 const BACKGROUNDS = [
   {
-    id: 'sunset', label: '夕陽漸層',
+    id: 'sunset', label: _t('夕陽漸層'),
     draw: (W, H) => `<defs>${linear('g', ['#ffc371', '#ff5c39', '#c2185b', '#5b2a86'])}${glow('s', '#fff5d6', 0.7)}</defs>
       <rect width="${W}" height="${H}" fill="url(#g)"/><circle cx="${W * 0.78}" cy="${H * 0.2}" r="${Math.max(W, H) * 0.42}" fill="url(#s)"/>`,
   },
   {
-    id: 'ocean', label: '海洋藍',
+    id: 'ocean', label: _t('海洋藍'),
     draw: (W, H) => `<defs>${linear('g', ['#5ee7df', '#2f7de1', '#1b1464'], [0, 0, 0.4, 1])}${glow('s', '#ffffff', 0.35)}</defs>
       <rect width="${W}" height="${H}" fill="url(#g)"/><circle cx="${W * 0.2}" cy="${H * 0.1}" r="${Math.max(W, H) * 0.5}" fill="url(#s)"/>`,
   },
   {
-    id: 'mint', label: '清新薄荷',
+    id: 'mint', label: _t('清新薄荷'),
     draw: (W, H) => `<defs>${linear('g', ['#f6ffe0', '#b8f0b0', '#4fc3a1'], [0, 0, 1, 1])}</defs><rect width="${W}" height="${H}" fill="url(#g)"/>`,
   },
   {
-    id: 'aurora', label: '霓虹光暈',
+    id: 'aurora', label: _t('霓虹光暈'),
     draw: (W, H) => {
       const R = Math.max(W, H);
       const blobs = [['#ff3d7f', 0.15, 0.25, 0.55], ['#7b5cff', 0.85, 0.2, 0.6], ['#00d4ff', 0.7, 0.95, 0.55], ['#ffb84d', 0.1, 0.95, 0.45]];
@@ -83,7 +84,7 @@ const BACKGROUNDS = [
     },
   },
   {
-    id: 'polka', label: '復古波點',
+    id: 'polka', label: _t('復古波點'),
     draw: (W, H) => {
       const s = Math.round(Math.min(W, H) / 8);
       return `<defs><pattern id="p" width="${s}" height="${s}" patternUnits="userSpaceOnUse">
@@ -92,7 +93,7 @@ const BACKGROUNDS = [
     },
   },
   {
-    id: 'stripes', label: '糖果條紋',
+    id: 'stripes', label: _t('糖果條紋'),
     draw: (W, H) => {
       const s = Math.round(Math.min(W, H) / 7);
       return `<defs><pattern id="p" width="${s}" height="${s}" patternUnits="userSpaceOnUse" patternTransform="rotate(35)">
@@ -101,7 +102,7 @@ const BACKGROUNDS = [
     },
   },
   {
-    id: 'gridpaper', label: '方格紙',
+    id: 'gridpaper', label: _t('方格紙'),
     draw: (W, H) => {
       const s = Math.round(Math.min(W, H) / 14);
       return `<defs><pattern id="p" width="${s}" height="${s}" patternUnits="userSpaceOnUse">
@@ -110,14 +111,14 @@ const BACKGROUNDS = [
     },
   },
   {
-    id: 'waves', label: '海浪',
+    id: 'waves', label: _t('海浪'),
     draw: (W, H) => `<defs>${linear('g', ['#fff0e0', '#ffc9a8'], [0, 0, 0, 1])}</defs><rect width="${W}" height="${H}" fill="url(#g)"/>
       <path d="${wavePath(W, H, H * 0.62, H * 0.035, W * 0.55, 0)}" fill="#8fd3ff"/>
       <path d="${wavePath(W, H, H * 0.72, H * 0.04, W * 0.42, 1.8)}" fill="#3fa9f5"/>
       <path d="${wavePath(W, H, H * 0.83, H * 0.03, W * 0.33, 3.1)}" fill="#1c6fd1"/>`,
   },
   {
-    id: 'confetti', label: '彩色紙花',
+    id: 'confetti', label: _t('彩色紙花'),
     draw: (W, H) => {
       const r = rng(11);
       const colors = ['#ff5c39', '#ffd23f', '#3ddc97', '#4cc9f0', '#f72585', '#ffffff'];
@@ -133,7 +134,7 @@ const BACKGROUNDS = [
     },
   },
   {
-    id: 'night', label: '星空',
+    id: 'night', label: _t('星空'),
     draw: (W, H) => {
       const r = rng(5);
       const s = Math.min(W, H);
@@ -153,12 +154,12 @@ const BACKGROUNDS = [
 const INK = '#1b1440';
 const STICKERS = [
   {
-    id: 'burst', label: 'NEW 爆炸貼',
+    id: 'burst', label: _t('NEW 爆炸貼'),
     draw: () => `<g transform="rotate(-10 256 256)"><polygon points="${starPoints(256, 256, 16, 238, 192)}" fill="#ffd23f" stroke="${INK}" stroke-width="12" stroke-linejoin="round"/>
       <text x="256" y="256" dy=".35em" text-anchor="middle" font-family="${FONT}" font-weight="900" font-size="124" fill="#ff3d5a" stroke="${INK}" stroke-width="10" paint-order="stroke" stroke-linejoin="round">NEW</text></g>`,
   },
   {
-    id: 'heart', label: '愛心',
+    id: 'heart', label: _t('愛心'),
     draw: () => {
       const d = 'M256 448C120 352 48 280 48 190c0-62 48-110 108-110 42 0 78 22 100 58 22-36 58-58 100-58 60 0 108 48 108 110 0 90-72 162-208 258z';
       return `<defs>${linear('g', ['#ff8fb1', '#ff2d55'], [0, 0, 0.6, 1])}</defs>
@@ -167,12 +168,12 @@ const STICKERS = [
     },
   },
   {
-    id: 'sparkles', label: '閃閃發亮',
+    id: 'sparkles', label: _t('閃閃發亮'),
     draw: () => `<defs>${linear('g', ['#fff7c2', '#ffc93c', '#ff9f1c'], [0, 0, 1, 1])}</defs>
       <path d="${sparkle(220, 280, 190)}" fill="url(#g)"/><path d="${sparkle(400, 120, 90)}" fill="url(#g)"/><path d="${sparkle(410, 400, 56)}" fill="url(#g)"/>`,
   },
   {
-    id: 'arrow', label: '手繪箭頭',
+    id: 'arrow', label: _t('手繪箭頭'),
     draw: () => {
       const line = 'M80 420C120 260 250 160 420 150';
       const head = 'M340 90L425 150L350 222';
@@ -181,28 +182,28 @@ const STICKERS = [
     },
   },
   {
-    id: 'bubble', label: '對話框',
+    id: 'bubble', label: _t('對話框'),
     draw: () => `<path d="M96 80h320a56 56 0 0 1 56 56v170a56 56 0 0 1-56 56H230l-96 82 14-82H96a56 56 0 0 1-56-56V136a56 56 0 0 1 56-56z" fill="#fff" stroke="${INK}" stroke-width="12" stroke-linejoin="round"/>
       <text x="256" y="222" dy=".35em" text-anchor="middle" font-family="${FONT}" font-weight="900" font-size="112" fill="${INK}" textLength="320" lengthAdjust="spacingAndGlyphs">WOW!</text>`,
   },
   {
-    id: 'pin', label: '地點',
+    id: 'pin', label: _t('地點'),
     draw: () => `<ellipse cx="256" cy="470" rx="90" ry="22" fill="#000" opacity=".25"/>
       <path d="M256 466C176 360 104 282 104 198a152 152 0 0 1 304 0c0 84-72 162-152 268z" fill="#ff3d5a" stroke="#fff" stroke-width="14" stroke-linejoin="round"/>
       <circle cx="256" cy="198" r="58" fill="#fff"/>`,
   },
   {
-    id: 'check', label: '打勾',
+    id: 'check', label: _t('打勾'),
     draw: () => `<circle cx="256" cy="256" r="220" fill="#2ecc71" stroke="#fff" stroke-width="18"/><path d="M150 262l72 72 142-150" stroke="#fff" stroke-width="46" fill="none" stroke-linecap="round" stroke-linejoin="round"/>`,
   },
   {
-    id: 'subscribe', label: '訂閱按鈕',
+    id: 'subscribe', label: _t('訂閱按鈕'),
     draw: () => `<rect x="20" y="186" width="472" height="140" rx="70" fill="#ff2742" stroke="#fff" stroke-width="10"/>
       <path d="M86 296h76M96 296v-40a28 28 0 0 1 56 0v40M114 306a10 10 0 0 0 20 0" stroke="#fff" stroke-width="12" fill="none" stroke-linecap="round" stroke-linejoin="round"/>
       <text x="322" y="256" dy=".35em" text-anchor="middle" font-family="${FONT}" font-weight="900" font-size="54" fill="#fff" textLength="270" lengthAdjust="spacingAndGlyphs">SUBSCRIBE</text>`,
   },
   {
-    id: 'smile', label: '笑臉',
+    id: 'smile', label: _t('笑臉'),
     draw: () => `<defs>${linear('g', ['#ffe680', '#ffb800'], [0, 0, 0, 1])}</defs><circle cx="256" cy="256" r="220" fill="url(#g)" stroke="#fff" stroke-width="14"/>
       <ellipse cx="186" cy="210" rx="24" ry="34" fill="#5a3a00"/><ellipse cx="326" cy="210" rx="24" ry="34" fill="#5a3a00"/>
       <circle cx="140" cy="290" r="28" fill="#ff7a8a" opacity=".55"/><circle cx="372" cy="290" r="28" fill="#ff7a8a" opacity=".55"/>
@@ -221,11 +222,11 @@ function holePath(W, H, l, t, r, b, rad) {
 
 const FRAMES = [
   {
-    id: 'border', label: '白色圓角框',
+    id: 'border', label: _t('白色圓角框'),
     draw: (W, H) => { const s = Math.min(W, H), m = s * 0.035; return `<path d="${holePath(W, H, m, m, m, m, s * 0.045)}" fill="#fff" fill-rule="evenodd"/>`; },
   },
   {
-    id: 'polaroid', label: '拍立得',
+    id: 'polaroid', label: _t('拍立得'),
     draw: (W, H) => {
       const s = Math.min(W, H), m = s * 0.055;
       return `<path d="${holePath(W, H, m, m, m, m * 3, s * 0.006)}" fill="#fbfaf6" fill-rule="evenodd"/>
@@ -233,7 +234,7 @@ const FRAMES = [
     },
   },
   {
-    id: 'film', label: '底片',
+    id: 'film', label: _t('底片'),
     draw: (W, H) => {
       const s = Math.min(W, H), bar = s * 0.11, hole = bar * 0.42, gap = hole * 1.6;
       let holes = '';
@@ -242,18 +243,18 @@ const FRAMES = [
     },
   },
   {
-    id: 'vignette', label: '暗角',
+    id: 'vignette', label: _t('暗角'),
     draw: (W, H) => `<defs><radialGradient id="v" cx=".5" cy=".5" r=".75"><stop offset=".5" stop-color="#000" stop-opacity="0"/><stop offset="1" stop-color="#000" stop-opacity=".85"/></radialGradient></defs><rect width="${W}" height="${H}" fill="url(#v)"/>`,
   },
   {
-    id: 'cinema', label: '電影黑邊',
+    id: 'cinema', label: _t('電影黑邊'),
     draw: (W, H) => {
       const bar = W >= H ? Math.max(H * 0.06, (H - W / 2.39) / 2) : H * 0.12;
       return `<rect width="${W}" height="${r1(bar)}" fill="#000"/><rect y="${r1(H - bar)}" width="${W}" height="${r1(bar)}" fill="#000"/>`;
     },
   },
   {
-    id: 'neon', label: '霓虹框',
+    id: 'neon', label: _t('霓虹框'),
     draw: (W, H) => {
       const s = Math.min(W, H), m = s * 0.05, w = s * 0.012;
       const rect = (inset, c, sw) => `<rect x="${m + inset}" y="${m + inset}" width="${W - 2 * (m + inset)}" height="${H - 2 * (m + inset)}" rx="${s * 0.04}" fill="none" stroke="${c}" stroke-width="${sw}"/>`;
@@ -262,7 +263,7 @@ const FRAMES = [
     },
   },
   {
-    id: 'rec', label: '錄影畫面',
+    id: 'rec', label: _t('錄影畫面'),
     draw: (W, H) => {
       const s = Math.min(W, H), m = s * 0.06, L = s * 0.1, w = s * 0.008;
       const c = (x, y, dx, dy) => `<path d="M${x} ${y + dy * L}V${y}H${x + dx * L}" stroke="#fff" stroke-width="${w}" fill="none" stroke-linecap="round"/>`;

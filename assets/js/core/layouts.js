@@ -2,18 +2,19 @@
 // 每個版型是一組「畫面框」，第一格是主畫面（最下面的軌道），其他依軌道由下往上排。
 
 import { getClip, canFrame, cleanFrame, activeClipsAt, produce } from './project.js';
+import { _t } from '../i18n.js';
 
 export const LAYOUTS = [
-  { id: 'pip-br', label: '子母畫面・右下', group: 'pip' },
-  { id: 'pip-bl', label: '子母畫面・左下', group: 'pip' },
-  { id: 'pip-tr', label: '子母畫面・右上', group: 'pip' },
-  { id: 'pip-tl', label: '子母畫面・左上', group: 'pip' },
-  { id: 'circle-br', label: '圓形小窗・右下', group: 'pip' },
-  { id: 'circle-bl', label: '圓形小窗・左下', group: 'pip' },
-  { id: 'split-h', label: '左右分割', group: 'split' },
-  { id: 'split-v', label: '上下分割', group: 'split' },
-  { id: 'three', label: '三分割', group: 'split' },
-  { id: 'grid4', label: '四宮格', group: 'split' },
+  { id: 'pip-br', label: _t('子母畫面・右下'), group: 'pip' },
+  { id: 'pip-bl', label: _t('子母畫面・左下'), group: 'pip' },
+  { id: 'pip-tr', label: _t('子母畫面・右上'), group: 'pip' },
+  { id: 'pip-tl', label: _t('子母畫面・左上'), group: 'pip' },
+  { id: 'circle-br', label: _t('圓形小窗・右下'), group: 'pip' },
+  { id: 'circle-bl', label: _t('圓形小窗・左下'), group: 'pip' },
+  { id: 'split-h', label: _t('左右分割'), group: 'split' },
+  { id: 'split-v', label: _t('上下分割'), group: 'split' },
+  { id: 'three', label: _t('三分割'), group: 'split' },
+  { id: 'grid4', label: _t('四宮格'), group: 'split' },
 ];
 
 export const PIP_SIZE = 0.34;    // 子畫面寬度（畫面的比例）

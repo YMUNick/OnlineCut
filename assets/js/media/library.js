@@ -2,6 +2,7 @@
 
 import { uid } from '../core/project.js';
 import { loadMediabunny, canStreamAudio } from '../engine/mb.js';
+import { _t } from '../i18n.js';
 
 export const VIDEO_EXTS = ['.mp4', '.m4v', '.mov', '.webm', '.mkv', '.ogv', '.avi'];
 export const AUDIO_EXTS = ['.mp3', '.wav', '.m4a', '.aac', '.ogg', '.oga', '.opus', '.flac', '.weba'];
@@ -36,9 +37,9 @@ function friendly(message) {
 
 function once(target, ok, fail = 'error', timeoutMs = 20000) {
   return new Promise((resolve, reject) => {
-    const timer = setTimeout(() => { cleanup(); reject(friendly('讀取逾時')); }, timeoutMs);
+    const timer = setTimeout(() => { cleanup(); reject(friendly(_t('讀取逾時'))); }, timeoutMs);
     const onOk = () => { cleanup(); resolve(); };
-    const onFail = () => { cleanup(); reject(target.error || friendly('無法讀取')); };
+    const onFail = () => { cleanup(); reject(target.error || friendly(_t('無法讀取'))); };
     function cleanup() {
       clearTimeout(timer);
       target.removeEventListener(ok, onOk);
@@ -62,7 +63,7 @@ async function resolveDuration(el) {
 /** 讀取素材資訊；不支援的檔案會丟出看得懂的錯誤 */
 export async function probe(file) {
   const type = detectType(file);
-  if (!type) throw friendly(`不支援的檔案類型：${file.name}`);
+  if (!type) throw friendly(_t('不支援的檔案類型：{name}', { name: file.name }));
   const url = URL.createObjectURL(file);
   const info = { id: uid('med'), type, name: file.name, size: file.size, mime: file.type, addedAt: Date.now() };
   try {
@@ -80,11 +81,11 @@ export async function probe(file) {
       el.src = url;
       await once(el, 'loadedmetadata');
       info.duration = await resolveDuration(el);
-      if (!(info.duration > 0)) throw friendly('無法取得長度');
+      if (!(info.duration > 0)) throw friendly(_t('無法取得長度'));
       if (type === 'video') {
         info.width = el.videoWidth;
         info.height = el.videoHeight;
-        if (!info.width || !info.height) throw friendly('讀不到影片畫面（瀏覽器可能不支援這種編碼，可以先轉成 MP4 H.264 或 WebM）');
+        if (!info.width || !info.height) throw friendly(_t('讀不到影片畫面（瀏覽器可能不支援這種編碼，可以先轉成 MP4 H.264 或 WebM）'));
       }
       el.removeAttribute('src');
       el.load();
@@ -92,8 +93,8 @@ export async function probe(file) {
   } catch (e) {
     URL.revokeObjectURL(url);
     // 瀏覽器原本的錯誤訊息（例如 PipelineStatus::DEMUXER_ERROR…）使用者看不懂，換成白話
-    const reason = e?.friendly ? e.message : '檔案損毀，或瀏覽器不支援這種格式';
-    throw friendly(`${file.name}：${reason}`);
+    const reason = e?.friendly ? e.message : _t('檔案損毀，或瀏覽器不支援這種格式');
+    throw friendly(_t('{name}：{reason}', { name: file.name, reason }));
   }
   return { info, url };
 }

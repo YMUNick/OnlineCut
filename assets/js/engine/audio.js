@@ -3,6 +3,7 @@
 
 import { getTrack, clipEnd, fadeFactor } from '../core/project.js';
 import { loadMediabunny, canStreamAudio } from './mb.js';
+import { _t } from '../i18n.js';
 
 export const audioSettings = {
   chunkSeconds: 30,   // 每次混音的長度
@@ -67,7 +68,7 @@ export class AudioSources {
 
   async _open(mediaId) {
     const item = this.runtime.get(mediaId);
-    if (!item) return { kind: 'error', reason: '素材檔案遺失' };
+    if (!item) return { kind: 'error', reason: _t('素材檔案遺失') };
     if (canStreamAudio()) {
       try {
         const mb = await loadMediabunny();
@@ -80,7 +81,7 @@ export class AudioSources {
     const whole = await this.runtime.decodeAudio(mediaId);
     if (whole) return { kind: 'whole', buffer: whole };
     if (this.runtime.get(mediaId)?.hasAudio === false) return { kind: 'none' };
-    return { kind: 'error', reason: '檔案太大或格式不支援，瀏覽器無法讀取聲音' };
+    return { kind: 'error', reason: _t('檔案太大或格式不支援，瀏覽器無法讀取聲音') };
   }
 
   /** 有沒有聲音（none = 沒有音軌，error = 有但讀不到） */
@@ -134,7 +135,7 @@ export async function* mixChunks(project, sources, duration, { sampleRate = 4800
     const w0 = i0 / sampleRate, w1 = i1 / sampleRate;
     const ctx = new OfflineAudioContext(2, i1 - i0, sampleRate);
     for (const piece of audioPlan(project, w0, w1)) {
-      if (signal?.aborted) throw Object.assign(new Error('已取消匯出'), { name: 'AbortError' });
+      if (signal?.aborted) throw Object.assign(new Error(_t('已取消匯出')), { name: 'AbortError' });
       const id = piece.clip.mediaId;
       const seg = await sources.segment(id, piece.srcStart, piece.srcEnd);
       if (!seg) {

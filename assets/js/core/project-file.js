@@ -5,6 +5,7 @@
 
 import { normalizeProject } from './project.js';
 import { createZip, readZip, looksLikeZip, ZipError } from './zip.js';
+import { _t } from '../i18n.js';
 
 export const FORMAT = 'onlinecut-project';
 export const FILE_VERSION = 1;
@@ -42,16 +43,16 @@ export function parseManifest(text) {
   try {
     data = JSON.parse(text);
   } catch {
-    throw new ProjectFileError('專案檔內容損毀（不是有效的 JSON）');
+    throw new ProjectFileError(_t('專案檔內容損毀（不是有效的 JSON）'));
   }
   if (!data || typeof data !== 'object' || data.format !== FORMAT) {
-    throw new ProjectFileError('這不是 OnlineCut 的專案檔');
+    throw new ProjectFileError(_t('這不是 OnlineCut 的專案檔'));
   }
   if (typeof data.version !== 'number' || data.version > FILE_VERSION) {
-    throw new ProjectFileError('這個專案檔是用較新版本的 OnlineCut 建立的，請重新整理頁面取得最新版本後再開啟');
+    throw new ProjectFileError(_t('這個專案檔是用較新版本的 OnlineCut 建立的，請重新整理頁面取得最新版本後再開啟'));
   }
   const project = normalizeProject(data.project);
-  if (!project) throw new ProjectFileError('專案檔內容損毀（找不到專案資料）');
+  if (!project) throw new ProjectFileError(_t('專案檔內容損毀（找不到專案資料）'));
   return { project, includesMedia: data.includesMedia !== false, exportedAt: data.exportedAt ?? null };
 }
 
@@ -80,11 +81,11 @@ export async function packProject(project, getFile, { includeMedia = true, onPro
  * 回傳 { project, files: Map<mediaId, File>, missing: [專案用到但檔案裡沒有的素材 id], includesMedia, corrupted: [內容損毀的素材 id] }
  */
 export async function unpackProject(file, { verify = true, onProgress = () => {} } = {}) {
-  if (!file || file.size === 0) throw new ProjectFileError('檔案是空的');
+  if (!file || file.size === 0) throw new ProjectFileError(_t('檔案是空的'));
   if (!(await looksLikeZip(file))) {
     // 純 JSON（只有專案設定，沒有素材）
     const head = new Uint8Array(await file.slice(0, 1).arrayBuffer())[0];
-    if (head !== 0x7b /* { */ && head !== 0xef /* BOM */) throw new ProjectFileError('這不是 OnlineCut 的專案檔');
+    if (head !== 0x7b /* { */ && head !== 0xef /* BOM */) throw new ProjectFileError(_t('這不是 OnlineCut 的專案檔'));
     const text = (await file.text()).replace(/^﻿/, '');
     const { project, exportedAt } = parseManifest(text);
     return { project, files: new Map(), missing: Object.keys(project.media), includesMedia: false, corrupted: [], exportedAt };
@@ -94,11 +95,11 @@ export async function unpackProject(file, { verify = true, onProgress = () => {}
   try {
     entries = await readZip(file);
   } catch (e) {
-    throw new ProjectFileError(e instanceof ZipError ? `無法讀取專案檔：${e.message}` : '無法讀取專案檔');
+    throw new ProjectFileError(e instanceof ZipError ? _t('無法讀取專案檔：{reason}', { reason: e.message }) : _t('無法讀取專案檔'));
   }
   const manifestEntry = entries.get(MANIFEST);
-  if (!manifestEntry) throw new ProjectFileError('這不是 OnlineCut 的專案檔（缺少 project.json）');
-  if (verify && !(await manifestEntry.verify())) throw new ProjectFileError('專案檔已損毀（project.json 內容不完整）');
+  if (!manifestEntry) throw new ProjectFileError(_t('這不是 OnlineCut 的專案檔（缺少 project.json）'));
+  if (verify && !(await manifestEntry.verify())) throw new ProjectFileError(_t('專案檔已損毀（project.json 內容不完整）'));
   const { project, includesMedia, exportedAt } = parseManifest(await (await manifestEntry.blob()).text());
 
   const files = new Map();

@@ -1,3 +1,4 @@
+import { _t } from '../i18n.js';
 // IndexedDB 儲存：專案 JSON 與素材都只存在使用者自己的瀏覽器裡，不會上傳。
 //
 // 素材怎麼保存（讓重新整理後還在）：
@@ -22,7 +23,7 @@ let dbPromise = null;
 function openDB() {
   if (dbPromise) return dbPromise;
   dbPromise = new Promise((resolve, reject) => {
-    if (typeof indexedDB === 'undefined') return reject(new Error('此瀏覽器不支援 IndexedDB'));
+    if (typeof indexedDB === 'undefined') return reject(new Error(_t('此瀏覽器不支援 IndexedDB')));
     const req = indexedDB.open(DB_NAME, DB_VERSION);
     req.onupgradeneeded = () => {
       const db = req.result;
@@ -32,7 +33,7 @@ function openDB() {
     };
     req.onsuccess = () => resolve(req.result);
     req.onerror = () => reject(req.error);
-    req.onblocked = () => reject(new Error('資料庫被其他分頁占用，請關閉其他 OnlineCut 分頁後重新整理'));
+    req.onblocked = () => reject(new Error(_t('資料庫被其他分頁占用，請關閉其他 OnlineCut 分頁後重新整理')));
   });
   dbPromise.catch(() => { dbPromise = null; });
   return dbPromise;
@@ -48,7 +49,7 @@ async function tx(store, mode, fn) {
     if (req) req.onsuccess = () => { result = req.result; };
     t.oncomplete = () => resolve(result);
     t.onerror = () => reject(t.error);
-    t.onabort = () => reject(t.error || new Error('儲存被中止（可能是空間不足）'));
+    t.onabort = () => reject(t.error || new Error(_t('儲存被中止（可能是空間不足）')));
   });
 }
 

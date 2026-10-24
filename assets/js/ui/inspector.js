@@ -5,21 +5,22 @@ import { formatTimecode, formatDuration, clamp } from '../core/time.js';
 import { icon } from './icons.js';
 import { escapeHtml } from './dialogs.js';
 import { formatBytes } from './media-panel.js';
+import { _t } from '../i18n.js';
 
-const TYPE_LABEL = { video: '影片片段', image: '圖片片段', text: '文字片段', audio: '音訊片段' };
+const TYPE_LABEL = { video: _t('影片片段'), image: _t('圖片片段'), text: _t('文字片段'), audio: _t('音訊片段') };
 const FONTS = [
-  ['Noto Sans TC', '思源黑體'],
-  ['Noto Serif TC', '思源宋體'],
-  ['system-ui', '系統字型'],
-  ['ui-monospace', '等寬字型'],
+  ['Noto Sans TC', _t('思源黑體')],
+  ['Noto Serif TC', _t('思源宋體')],
+  ['system-ui', _t('系統字型')],
+  ['ui-monospace', _t('等寬字型')],
 ];
 const FILTER_PRESETS = [
-  ['原始', { brightness: 100, contrast: 100, saturation: 100, grayscale: 0, blur: 0 }],
-  ['鮮豔', { brightness: 104, contrast: 112, saturation: 140, grayscale: 0, blur: 0 }],
-  ['柔和', { brightness: 108, contrast: 88, saturation: 82, grayscale: 0, blur: 0 }],
-  ['高對比', { brightness: 100, contrast: 145, saturation: 105, grayscale: 0, blur: 0 }],
-  ['黑白', { brightness: 100, contrast: 118, saturation: 100, grayscale: 100, blur: 0 }],
-  ['夢幻', { brightness: 112, contrast: 92, saturation: 120, grayscale: 0, blur: 1.5 }],
+  [_t('原始'), { brightness: 100, contrast: 100, saturation: 100, grayscale: 0, blur: 0 }],
+  [_t('鮮豔'), { brightness: 104, contrast: 112, saturation: 140, grayscale: 0, blur: 0 }],
+  [_t('柔和'), { brightness: 108, contrast: 88, saturation: 82, grayscale: 0, blur: 0 }],
+  [_t('高對比'), { brightness: 100, contrast: 145, saturation: 105, grayscale: 0, blur: 0 }],
+  [_t('黑白'), { brightness: 100, contrast: 118, saturation: 100, grayscale: 100, blur: 0 }],
+  [_t('夢幻'), { brightness: 112, contrast: 92, saturation: 120, grayscale: 0, blur: 1.5 }],
 ];
 
 export function parseColor(str) {
@@ -87,23 +88,23 @@ export class Inspector {
     this.els.title.textContent = TYPE_LABEL[clip.type];
 
     const p = this.store.project;
-    const timing = this.section('時間');
+    const timing = this.section(_t('時間'));
     const kv = document.createElement('dl');
     kv.className = 'kv';
     timing.appendChild(kv);
     this.bind(kv, (c) => {
-      const rows = [['開始', formatTimecode(c.start, p.fps)], ['結束', formatTimecode(clipEnd(c), p.fps)], ['長度', formatTimecode(c.duration, p.fps)]];
-      if (c.type === 'video' || c.type === 'audio') rows.push(['素材入點', formatTimecode(c.srcIn, p.fps)]);
-      if (c.mediaId && p.media[c.mediaId]) rows.push(['來源', p.media[c.mediaId].name]);
+      const rows = [[_t('開始'), formatTimecode(c.start, p.fps)], [_t('結束'), formatTimecode(clipEnd(c), p.fps)], [_t('長度'), formatTimecode(c.duration, p.fps)]];
+      if (c.type === 'video' || c.type === 'audio') rows.push([_t('素材入點'), formatTimecode(c.srcIn, p.fps)]);
+      if (c.mediaId && p.media[c.mediaId]) rows.push([_t('來源'), p.media[c.mediaId].name]);
       kv.innerHTML = rows.map(([k, v]) => `<dt>${k}</dt><dd title="${escapeHtml(v)}">${escapeHtml(v)}</dd>`).join('');
     });
     const acts = document.createElement('div');
     acts.className = 'insp-actions';
     acts.style.marginTop = '12px';
     acts.innerHTML = `
-      <button class="ghost-btn" data-a="split">${icon('split', 'icon-sm')}分割</button>
-      <button class="ghost-btn" data-a="duplicate">${icon('copy', 'icon-sm')}複製</button>
-      <button class="ghost-btn" data-a="remove">${icon('trash', 'icon-sm')}刪除</button>`;
+      <button class="ghost-btn" data-a="split">${icon('split', 'icon-sm')}${_t('分割')}</button>
+      <button class="ghost-btn" data-a="duplicate">${icon('copy', 'icon-sm')}${_t('複製')}</button>
+      <button class="ghost-btn" data-a="remove">${icon('trash', 'icon-sm')}${_t('刪除')}</button>`;
     acts.addEventListener('click', (e) => { const a = e.target.closest('[data-a]')?.dataset.a; if (a) this.actions[a](); });
     timing.appendChild(acts);
 
@@ -117,26 +118,26 @@ export class Inspector {
   }
 
   buildMulti(n) {
-    this.els.title.textContent = `已選取 ${n} 個片段`;
-    const s = this.section('多選');
-    s.insertAdjacentHTML('beforeend', `<p class="hint-line" style="margin-top:0">一起拖曳可以同時移動。按 Delete 全部刪除，Shift + 點擊可加選或取消。</p>
-      <div class="insp-actions" style="margin-top:12px"><button class="ghost-btn" data-a="remove">${icon('trash', 'icon-sm')}全部刪除</button></div>`);
+    this.els.title.textContent = _t('已選取 {n} 個片段', { n });
+    const s = this.section(_t('多選'));
+    s.insertAdjacentHTML('beforeend', `<p class="hint-line" style="margin-top:0">${_t('一起拖曳可以同時移動。按 Delete 全部刪除，Shift + 點擊可加選或取消。')}</p>
+      <div class="insp-actions" style="margin-top:12px"><button class="ghost-btn" data-a="remove">${icon('trash', 'icon-sm')}${_t('全部刪除')}</button></div>`);
     s.querySelector('[data-a]').onclick = () => this.actions.remove();
   }
 
   buildProject() {
-    this.els.title.textContent = '專案設定';
+    this.els.title.textContent = _t('專案設定');
     const p = this.store.project;
-    const s1 = this.section('專案');
+    const s1 = this.section(_t('專案'));
     const name = document.createElement('input');
     name.className = 'text-input';
     name.maxLength = 120;
-    name.setAttribute('aria-label', '專案名稱');
+    name.setAttribute('aria-label', _t('專案名稱'));
     name.addEventListener('input', () => this.store.commit(renameProject(this.store.project, name.value), { key: 'rename' }));
     this.bind(name, (_, proj) => { name.value = proj.name; });
-    s1.appendChild(this.row('名稱', name, true));
+    s1.appendChild(this.row(_t('名稱'), name, true));
 
-    const s2 = this.section('畫面比例');
+    const s2 = this.section(_t('畫面比例'));
     const grid = document.createElement('div');
     grid.className = 'aspect-grid';
     for (const [key, a] of Object.entries(ASPECT_PRESETS)) {
@@ -153,43 +154,45 @@ export class Inspector {
 
     const bg = this.colorInput((v) => this.store.commit({ ...this.store.project, background: v }, { key: 'bg' }));
     this.bind(bg.input, (_, proj) => bg.set(proj.background || '#000000'));
-    const s3 = this.section('背景');
-    s3.appendChild(this.row('背景色', bg.el, true));
-    s3.insertAdjacentHTML('beforeend', '<p class="hint-line">素材沒有填滿畫面時看到的顏色。</p>');
+    const s3 = this.section(_t('背景'));
+    s3.appendChild(this.row(_t('背景色'), bg.el, true));
+    s3.insertAdjacentHTML('beforeend', `<p class="hint-line">${_t('素材沒有填滿畫面時看到的顏色。')}</p>`);
 
-    const s4 = this.section('概況');
+    const s4 = this.section(_t('概況'));
     const kv = document.createElement('dl');
     kv.className = 'kv';
     s4.appendChild(kv);
     const fill = async (proj) => {
       const rows = [
-        ['總長度', formatDuration(getDuration(proj))],
-        ['片段', `${proj.clips.length} 個`],
-        ['素材', `${Object.keys(proj.media).length} 個`],
-        ['解析度', `${proj.width}×${proj.height} · ${proj.fps} fps`],
+        [_t('總長度'), formatDuration(getDuration(proj))],
+        [_t('片段'), _t('{n} 個', { n: proj.clips.length })],
+        [_t('素材'), _t('{n} 個', { n: Object.keys(proj.media).length })],
+        [_t('解析度'), `${proj.width}×${proj.height} · ${proj.fps} fps`],
       ];
       kv.innerHTML = rows.map(([k, v]) => `<dt>${k}</dt><dd>${v}</dd>`).join('');
       const est = await this.actions.storageInfo?.();
-      if (est && kv.isConnected) kv.insertAdjacentHTML('beforeend', `<dt>本機儲存</dt><dd>${formatBytes(est.usage)} / ${formatBytes(est.quota)}</dd>`);
+      if (est && kv.isConnected) kv.insertAdjacentHTML('beforeend', `<dt>${_t('本機儲存')}</dt><dd>${formatBytes(est.usage)} / ${formatBytes(est.quota)}</dd>`);
     };
     this.bind(kv, (_, proj) => fill(proj));
 
-    const s5 = this.section('小技巧');
-    s5.insertAdjacentHTML('beforeend', `<ul class="hint-line" style="padding-left:18px;margin:0;display:grid;gap:6px">
-      <li>按 <kbd>S</kbd> 在播放頭分割，<kbd>Shift</kbd> + <kbd>Delete</kbd> 刪除後自動補位。</li>
-      <li>拖曳時按住 <kbd>Alt</kbd> 可暫時關閉吸附。</li>
-      <li>在預覽畫面上可以直接拖曳、縮放、旋轉圖層。</li>
-      <li>專案會自動存在這台裝置的瀏覽器裡。</li></ul>`);
+    const s5 = this.section(_t('小技巧'));
+    const tips = [
+      _t('按 <kbd>S</kbd> 在播放頭分割，<kbd>Shift</kbd> + <kbd>Delete</kbd> 刪除後自動補位。'),
+      _t('拖曳時按住 <kbd>Alt</kbd> 可暫時關閉吸附。'),
+      _t('在預覽畫面上可以直接拖曳、縮放、旋轉圖層。'),
+      _t('專案會自動存在這台裝置的瀏覽器裡。'),
+    ];
+    s5.insertAdjacentHTML('beforeend', `<ul class="hint-line" style="padding-left:18px;margin:0;display:grid;gap:6px">${tips.map(x => `<li>${x}</li>`).join('')}</ul>`);
     this.refresh();
   }
 
   // ---------- 各區塊 ----------
   buildText() {
-    const s = this.section('文字');
+    const s = this.section(_t('文字'));
     const ta = document.createElement('textarea');
     ta.className = 'textarea';
-    ta.setAttribute('aria-label', '文字內容');
-    ta.placeholder = '輸入文字，Enter 換行';
+    ta.setAttribute('aria-label', _t('文字內容'));
+    ta.placeholder = _t('輸入文字，Enter 換行');
     ta.addEventListener('input', () => this.commit(() => ({ text: { content: ta.value } }), 'content'));
     this.bind(ta, (c) => { ta.value = c.text.content; });
     s.appendChild(ta);
@@ -199,21 +202,21 @@ export class Inspector {
     font.innerHTML = FONTS.map(([v, l]) => `<option value="${v}">${l}</option>`).join('');
     font.onchange = () => this.commit(() => ({ text: { fontFamily: font.value } }), 'font');
     this.bind(font, (c) => { font.value = c.text.fontFamily; });
-    const fontRow = this.row('字型', font, true);
+    const fontRow = this.row(_t('字型'), font, true);
     fontRow.style.marginTop = '12px';
     s.appendChild(fontRow);
 
-    s.appendChild(this.slider('字級', { min: 12, max: 400, step: 1, unit: 'px', get: c => c.text.fontSize, set: v => ({ text: { fontSize: v } }), key: 'size' }));
+    s.appendChild(this.slider(_t('字級'), { min: 12, max: 400, step: 1, unit: 'px', get: c => c.text.fontSize, set: v => ({ text: { fontSize: v } }), key: 'size' }));
 
-    const weight = this.seg([['400', '一般'], ['700', '粗'], ['900', '特粗']], (v) => this.commit(() => ({ text: { fontWeight: +v } }), 'weight'), (c) => String(c.text.fontWeight));
-    s.appendChild(this.row('粗細', weight, true));
+    const weight = this.seg([['400', _t('一般')], ['700', _t('粗')], ['900', _t('特粗')]], (v) => this.commit(() => ({ text: { fontWeight: +v } }), 'weight'), (c) => String(c.text.fontWeight));
+    s.appendChild(this.row(_t('粗細'), weight, true));
 
     const style = this.seg([['left', icon('alignLeft')], ['center', icon('alignCenter')], ['right', icon('alignRight')]],
       (v) => this.commit(() => ({ text: { align: v } }), 'align'), (c) => c.text.align, true);
     const ital = document.createElement('button');
     ital.className = 'seg-btn';
     ital.innerHTML = icon('italic');
-    ital.title = '斜體';
+    ital.title = _t('斜體');
     ital.onclick = () => this.commit(c => ({ text: { italic: !c.text.italic } }), 'italic');
     this.bind(ital, c => ital.classList.toggle('on', !!c.text.italic));
     const wrap = document.createElement('div');
@@ -222,11 +225,11 @@ export class Inspector {
     italSeg.className = 'seg';
     italSeg.appendChild(ital);
     wrap.append(style, italSeg);
-    s.appendChild(this.row('對齊', wrap, true));
+    s.appendChild(this.row(_t('對齊'), wrap, true));
 
     const color = this.colorInput(v => this.commit(() => ({ text: { color: v } }), 'color'));
     this.bind(color.input, c => color.set(parseColor(c.text.color).hex));
-    s.appendChild(this.row('顏色', color.el, true));
+    s.appendChild(this.row(_t('顏色'), color.el, true));
 
     // 背景框
     const bgOn = document.createElement('input');
@@ -236,19 +239,19 @@ export class Inspector {
     bgWrap.style.cssText = 'display:flex;align-items:center;gap:10px';
     const lbl = document.createElement('label');
     lbl.className = 'check';
-    lbl.append(bgOn, document.createTextNode('顯示'));
+    lbl.append(bgOn, document.createTextNode(_t('顯示')));
     bgWrap.append(lbl, bgColor.el);
     bgOn.onchange = () => this.commit(() => ({ text: { background: bgOn.checked ? toRgba(bgColor.input.value || '#000000', 0.6) : '' } }), 'bgOn');
     this.bind(bgOn, c => { bgOn.checked = !!c.text.background; bgColor.set(parseColor(c.text.background).hex); bgColor.input.disabled = !c.text.background; });
-    s.appendChild(this.row('背景框', bgWrap, true));
-    s.appendChild(this.slider('背景透明', {
+    s.appendChild(this.row(_t('背景框'), bgWrap, true));
+    s.appendChild(this.slider(_t('背景透明'), {
       min: 0, max: 100, step: 1, unit: '%',
       get: c => Math.round(parseColor(c.text.background).alpha * 100),
       set: (v, c) => ({ text: { background: c.text.background ? toRgba(parseColor(c.text.background).hex, v / 100) : '' } }),
       key: 'bgAlpha', disabled: c => !c.text.background,
     }));
 
-    s.appendChild(this.slider('描邊', { min: 0, max: 24, step: 1, unit: 'px', get: c => c.text.strokeWidth, set: v => ({ text: { strokeWidth: v } }), key: 'stroke' }));
+    s.appendChild(this.slider(_t('描邊'), { min: 0, max: 24, step: 1, unit: 'px', get: c => c.text.strokeWidth, set: v => ({ text: { strokeWidth: v } }), key: 'stroke' }));
     const sc = this.colorInput(v => this.commit(() => ({ text: { strokeColor: v } }), 'strokeColor'));
     this.bind(sc.input, c => sc.set(parseColor(c.text.strokeColor).hex));
     const shadow = document.createElement('input');
@@ -257,25 +260,25 @@ export class Inspector {
     this.bind(shadow, c => { shadow.checked = !!c.text.shadow; });
     const shLbl = document.createElement('label');
     shLbl.className = 'check';
-    shLbl.append(shadow, document.createTextNode('陰影'));
+    shLbl.append(shadow, document.createTextNode(_t('陰影')));
     const sw = document.createElement('div');
     sw.style.cssText = 'display:flex;align-items:center;gap:14px';
     sw.append(sc.el, shLbl);
-    s.appendChild(this.row('描邊色', sw, true));
+    s.appendChild(this.row(_t('描邊色'), sw, true));
   }
 
   buildTransform() {
     const p = () => this.store.project;
-    const s = this.section('位置與大小', `<button class="link-btn" data-reset>${icon('reset', 'icon-sm')}重設</button>`);
+    const s = this.section(_t('位置與大小'), `<button class="link-btn" data-reset>${icon('reset', 'icon-sm')}${_t('重設')}</button>`);
     s.querySelector('[data-reset]').onclick = () => this.commit(() => ({ transform: { x: 0, y: 0, scale: 1, rotation: 0 } }), 'reset');
-    s.appendChild(this.slider('水平', { min: () => -p().width, max: () => p().width, step: 1, unit: 'px', get: c => Math.round(c.transform.x), set: v => ({ transform: { x: v } }), key: 'x', hardMin: -1e5, hardMax: 1e5 }));
-    s.appendChild(this.slider('垂直', { min: () => -p().height, max: () => p().height, step: 1, unit: 'px', get: c => Math.round(c.transform.y), set: v => ({ transform: { y: v } }), key: 'y', hardMin: -1e5, hardMax: 1e5 }));
-    s.appendChild(this.slider('縮放', { min: 5, max: 400, step: 1, unit: '%', get: c => Math.round(c.transform.scale * 100), set: v => ({ transform: { scale: v / 100 } }), key: 'scale', hardMax: 1000 }));
-    s.appendChild(this.slider('旋轉', { min: -180, max: 180, step: 1, unit: '°', get: c => Math.round(c.transform.rotation), set: v => ({ transform: { rotation: v } }), key: 'rot' }));
+    s.appendChild(this.slider(_t('水平'), { min: () => -p().width, max: () => p().width, step: 1, unit: 'px', get: c => Math.round(c.transform.x), set: v => ({ transform: { x: v } }), key: 'x', hardMin: -1e5, hardMax: 1e5 }));
+    s.appendChild(this.slider(_t('垂直'), { min: () => -p().height, max: () => p().height, step: 1, unit: 'px', get: c => Math.round(c.transform.y), set: v => ({ transform: { y: v } }), key: 'y', hardMin: -1e5, hardMax: 1e5 }));
+    s.appendChild(this.slider(_t('縮放'), { min: 5, max: 400, step: 1, unit: '%', get: c => Math.round(c.transform.scale * 100), set: v => ({ transform: { scale: v / 100 } }), key: 'scale', hardMax: 1000 }));
+    s.appendChild(this.slider(_t('旋轉'), { min: -180, max: 180, step: 1, unit: '°', get: c => Math.round(c.transform.rotation), set: v => ({ transform: { rotation: v } }), key: 'rot' }));
     const acts = document.createElement('div');
     acts.className = 'chip-row';
     acts.style.marginTop = '4px';
-    acts.innerHTML = `<button class="chip" data-a="center">置中</button><button class="chip" data-a="fit">完整顯示</button><button class="chip" data-a="fill">填滿畫面</button>`;
+    acts.innerHTML = `<button class="chip" data-a="center">${_t('置中')}</button><button class="chip" data-a="fit">${_t('完整顯示')}</button><button class="chip" data-a="fill">${_t('填滿畫面')}</button>`;
     acts.onclick = (e) => {
       const a = e.target.closest('[data-a]')?.dataset.a;
       if (!a) return;
@@ -295,8 +298,8 @@ export class Inspector {
     if (canFrame(clip)) {
       const b = document.createElement('button');
       b.className = 'chip';
-      b.innerHTML = '雙畫面版型…';
-      b.title = '子母畫面、圓形小窗、分割畫面';
+      b.innerHTML = _t('雙畫面版型…');
+      b.title = _t('子母畫面、圓形小窗、分割畫面');
       b.onclick = (e) => { e.stopPropagation(); this.actions.showLayouts?.(); };
       acts.appendChild(b);
     }
@@ -306,25 +309,25 @@ export class Inspector {
   /** 有畫面框（套用了版型）的片段：框的位置、形狀、邊框，以及框裡的取景 */
   buildFrame() {
     const p = () => this.store.project;
-    const s = this.section('畫面框', `<button class="link-btn" data-unframe>${icon('close', 'icon-sm')}取消版型</button>`);
+    const s = this.section(_t('畫面框'), `<button class="link-btn" data-unframe>${icon('close', 'icon-sm')}${_t('取消版型')}</button>`);
     s.querySelector('[data-unframe]').onclick = () => this.commit(() => ({ frame: null, transform: { x: 0, y: 0, scale: 1, rotation: 0 } }), 'unframe');
-    const shape = this.seg([['rect', '方形'], ['round', '圓角'], ['circle', '圓形']], (v) => this.commit((c) => {
+    const shape = this.seg([['rect', _t('方形')], ['round', _t('圓角')], ['circle', _t('圓形')]], (v) => this.commit((c) => {
       if (v !== 'circle') return { frame: { shape: v } };
       // 圓形：用寬高中比較短的一邊做成正圓，中心不動
       const f = c.frame, W = p().width, H = p().height;
       const d = Math.min(f.w * W, f.h * H);
       return { frame: { shape: v, x: f.x + f.w / 2 - d / W / 2, y: f.y + f.h / 2 - d / H / 2, w: d / W, h: d / H } };
     }, 'shape'), (c) => c.frame?.shape);
-    s.appendChild(this.row('形狀', shape, true));
+    s.appendChild(this.row(_t('形狀'), shape, true));
     const pct = (label, k, key, reset) => this.slider(label, {
       min: k === 'w' || k === 'h' ? MIN_FRAME * 100 : 0, max: 100, step: 0.5, unit: '%', decimals: 1, key, reset,
       get: c => (c.frame?.[k] ?? 0) * 100, set: v => ({ frame: { [k]: v / 100 } }), hardMin: k === 'w' || k === 'h' ? MIN_FRAME * 100 : -100, hardMax: 200,
     });
-    s.appendChild(pct('左邊', 'x', 'fx', 0));
-    s.appendChild(pct('上方', 'y', 'fy', 0));
-    s.appendChild(pct('寬度', 'w', 'fw', 100));
-    s.appendChild(pct('高度', 'h', 'fh', 100));
-    s.appendChild(this.slider('邊框', { min: 0, max: 40, step: 1, unit: 'px', get: c => c.frame?.border ?? 0, set: v => ({ frame: { border: v } }), key: 'fborder', hardMax: 60 }));
+    s.appendChild(pct(_t('左邊'), 'x', 'fx', 0));
+    s.appendChild(pct(_t('上方'), 'y', 'fy', 0));
+    s.appendChild(pct(_t('寬度'), 'w', 'fw', 100));
+    s.appendChild(pct(_t('高度'), 'h', 'fh', 100));
+    s.appendChild(this.slider(_t('邊框'), { min: 0, max: 40, step: 1, unit: 'px', get: c => c.frame?.border ?? 0, set: v => ({ frame: { border: v } }), key: 'fborder', hardMax: 60 }));
     const bc = this.colorInput(v => this.commit(() => ({ frame: { borderColor: v } }), 'fcolor'));
     this.bind(bc.input, c => { if (c?.frame) bc.set(c.frame.borderColor); });
     const shadow = document.createElement('input');
@@ -333,32 +336,32 @@ export class Inspector {
     this.bind(shadow, c => { shadow.checked = !!c?.frame?.shadow; });
     const shLbl = document.createElement('label');
     shLbl.className = 'check';
-    shLbl.append(shadow, document.createTextNode('陰影'));
+    shLbl.append(shadow, document.createTextNode(_t('陰影')));
     const wrap = document.createElement('div');
     wrap.style.cssText = 'display:flex;align-items:center;gap:14px';
     wrap.append(bc.el, shLbl);
-    s.appendChild(this.row('邊框色', wrap, true));
+    s.appendChild(this.row(_t('邊框色'), wrap, true));
 
-    const v = this.section('取景', `<button class="link-btn" data-reset>${icon('reset', 'icon-sm')}重設</button>`);
+    const v = this.section(_t('取景'), `<button class="link-btn" data-reset>${icon('reset', 'icon-sm')}${_t('重設')}</button>`);
     v.querySelector('[data-reset]').onclick = () => this.commit(() => ({ transform: { x: 0, y: 0, scale: 1 } }), 'freset');
-    v.appendChild(this.slider('縮放', { min: 100, max: 400, step: 1, unit: '%', get: c => Math.round(c.transform.scale * 100), set: v => ({ transform: { scale: v / 100 } }), key: 'scale', hardMin: 20, hardMax: 1000 }));
-    v.appendChild(this.slider('水平', { min: () => -p().width / 2, max: () => p().width / 2, step: 1, unit: 'px', get: c => Math.round(c.transform.x), set: v => ({ transform: { x: v } }), key: 'x', hardMin: -1e5, hardMax: 1e5 }));
-    v.appendChild(this.slider('垂直', { min: () => -p().height / 2, max: () => p().height / 2, step: 1, unit: 'px', get: c => Math.round(c.transform.y), set: v => ({ transform: { y: v } }), key: 'y', hardMin: -1e5, hardMax: 1e5 }));
-    v.insertAdjacentHTML('beforeend', '<p class="hint-line">影像會裁切填滿畫面框。在預覽上拖曳移動畫面框、拉角落調整大小；按住 <kbd>Alt</kbd> 拖曳或用滾輪調整框裡的取景。</p>');
+    v.appendChild(this.slider(_t('縮放'), { min: 100, max: 400, step: 1, unit: '%', get: c => Math.round(c.transform.scale * 100), set: v => ({ transform: { scale: v / 100 } }), key: 'scale', hardMin: 20, hardMax: 1000 }));
+    v.appendChild(this.slider(_t('水平'), { min: () => -p().width / 2, max: () => p().width / 2, step: 1, unit: 'px', get: c => Math.round(c.transform.x), set: v => ({ transform: { x: v } }), key: 'x', hardMin: -1e5, hardMax: 1e5 }));
+    v.appendChild(this.slider(_t('垂直'), { min: () => -p().height / 2, max: () => p().height / 2, step: 1, unit: 'px', get: c => Math.round(c.transform.y), set: v => ({ transform: { y: v } }), key: 'y', hardMin: -1e5, hardMax: 1e5 }));
+    v.insertAdjacentHTML('beforeend', `<p class="hint-line">${_t('影像會裁切填滿畫面框。在預覽上拖曳移動畫面框、拉角落調整大小；按住 <kbd>Alt</kbd> 拖曳或用滾輪調整框裡的取景。')}</p>`);
   }
 
   buildAppearance(clip) {
-    const s = this.section(clip.type === 'audio' ? '淡入淡出' : '外觀');
+    const s = this.section(clip.type === 'audio' ? _t('淡入淡出') : _t('外觀'));
     if (clip.type !== 'audio') {
-      s.appendChild(this.slider('不透明', { min: 0, max: 100, step: 1, unit: '%', get: c => Math.round(c.opacity * 100), set: v => ({ opacity: v / 100 }), key: 'opacity' }));
+      s.appendChild(this.slider(_t('不透明'), { min: 0, max: 100, step: 1, unit: '%', get: c => Math.round(c.opacity * 100), set: v => ({ opacity: v / 100 }), key: 'opacity' }));
     }
     const maxFade = (c) => Math.max(0.1, Math.min(10, c.duration));
-    s.appendChild(this.slider('淡入', { min: 0, max: maxFade, step: 0.1, unit: 's', decimals: 1, get: c => c.fadeIn, set: v => ({ fadeIn: v }), key: 'fadeIn' }));
-    s.appendChild(this.slider('淡出', { min: 0, max: maxFade, step: 0.1, unit: 's', decimals: 1, get: c => c.fadeOut, set: v => ({ fadeOut: v }), key: 'fadeOut' }));
+    s.appendChild(this.slider(_t('淡入'), { min: 0, max: maxFade, step: 0.1, unit: 's', decimals: 1, get: c => c.fadeIn, set: v => ({ fadeIn: v }), key: 'fadeIn' }));
+    s.appendChild(this.slider(_t('淡出'), { min: 0, max: maxFade, step: 0.1, unit: 's', decimals: 1, get: c => c.fadeOut, set: v => ({ fadeOut: v }), key: 'fadeOut' }));
   }
 
   buildFilters() {
-    const s = this.section('濾鏡');
+    const s = this.section(_t('濾鏡'));
     const chips = document.createElement('div');
     chips.className = 'chip-row';
     chips.style.marginBottom = '14px';
@@ -374,27 +377,27 @@ export class Inspector {
       });
     });
     s.appendChild(chips);
-    s.appendChild(this.slider('亮度', { min: 0, max: 200, step: 1, unit: '%', get: c => c.filters.brightness, set: v => ({ filters: { brightness: v } }), key: 'br' }));
-    s.appendChild(this.slider('對比', { min: 0, max: 200, step: 1, unit: '%', get: c => c.filters.contrast, set: v => ({ filters: { contrast: v } }), key: 'ct' }));
-    s.appendChild(this.slider('飽和度', { min: 0, max: 200, step: 1, unit: '%', get: c => c.filters.saturation, set: v => ({ filters: { saturation: v } }), key: 'sat' }));
-    s.appendChild(this.slider('黑白', { min: 0, max: 100, step: 1, unit: '%', get: c => c.filters.grayscale, set: v => ({ filters: { grayscale: v } }), key: 'gray' }));
-    s.appendChild(this.slider('模糊', { min: 0, max: 30, step: 0.5, unit: 'px', decimals: 1, get: c => c.filters.blur, set: v => ({ filters: { blur: v } }), key: 'blur' }));
+    s.appendChild(this.slider(_t('亮度'), { min: 0, max: 200, step: 1, unit: '%', get: c => c.filters.brightness, set: v => ({ filters: { brightness: v } }), key: 'br' }));
+    s.appendChild(this.slider(_t('對比'), { min: 0, max: 200, step: 1, unit: '%', get: c => c.filters.contrast, set: v => ({ filters: { contrast: v } }), key: 'ct' }));
+    s.appendChild(this.slider(_t('飽和度'), { min: 0, max: 200, step: 1, unit: '%', get: c => c.filters.saturation, set: v => ({ filters: { saturation: v } }), key: 'sat' }));
+    s.appendChild(this.slider(_t('黑白'), { min: 0, max: 100, step: 1, unit: '%', get: c => c.filters.grayscale, set: v => ({ filters: { grayscale: v } }), key: 'gray' }));
+    s.appendChild(this.slider(_t('模糊'), { min: 0, max: 30, step: 0.5, unit: 'px', decimals: 1, get: c => c.filters.blur, set: v => ({ filters: { blur: v } }), key: 'blur' }));
   }
 
   buildAudio(clip) {
-    const s = this.section(clip.type === 'video' ? '聲音與速度' : '聲音');
+    const s = this.section(clip.type === 'video' ? _t('聲音與速度') : _t('聲音'));
     const item = this.runtime.get(clip.mediaId);
     if (clip.type === 'video' && item && item.hasAudio === false) {
-      s.insertAdjacentHTML('beforeend', '<p class="hint-line" style="margin:0 0 10px">這段影片沒有聲音。</p>');
+      s.insertAdjacentHTML('beforeend', `<p class="hint-line" style="margin:0 0 10px">${_t('這段影片沒有聲音。')}</p>`);
     }
-    s.appendChild(this.slider('音量', { min: 0, max: 200, step: 1, unit: '%', get: c => Math.round(c.volume * 100), set: v => ({ volume: v / 100 }), key: 'vol' }));
+    s.appendChild(this.slider(_t('音量'), { min: 0, max: 200, step: 1, unit: '%', get: c => Math.round(c.volume * 100), set: v => ({ volume: v / 100 }), key: 'vol' }));
     const mute = document.createElement('input');
     mute.type = 'checkbox';
     mute.onchange = () => this.commit(() => ({ muted: mute.checked }), 'mute');
     this.bind(mute, c => { mute.checked = !!c.muted; });
     const lbl = document.createElement('label');
     lbl.className = 'check';
-    lbl.append(mute, document.createTextNode('靜音這個片段'));
+    lbl.append(mute, document.createTextNode(_t('靜音這個片段')));
     s.appendChild(this.row('', lbl, true));
 
     const speeds = [0.5, 1, 1.5, 2];
@@ -403,9 +406,9 @@ export class Inspector {
     chips.innerHTML = speeds.map(v => `<button class="chip" data-v="${v}">${v}×</button>`).join('');
     chips.onclick = (e) => { const v = e.target.closest('[data-v]')?.dataset.v; if (v) this.commit(() => ({ speed: +v }), 'speedChip'); };
     this.bind(chips, c => chips.querySelectorAll('.chip').forEach(b => b.classList.toggle('on', +b.dataset.v === c.speed)));
-    s.appendChild(this.row('速度', chips, true));
+    s.appendChild(this.row(_t('速度'), chips, true));
     s.appendChild(this.slider('', { min: 25, max: 400, step: 5, unit: '%', get: c => Math.round(c.speed * 100), set: v => ({ speed: v / 100 }), key: 'speed' }));
-    s.insertAdjacentHTML('beforeend', '<p class="hint-line">變速會改變片段長度；放慢時如果撞到後面的片段會自動截短。</p>');
+    s.insertAdjacentHTML('beforeend', `<p class="hint-line">${_t('變速會改變片段長度；放慢時如果撞到後面的片段會自動截短。')}</p>`);
   }
 
   // ---------- 小元件 ----------
@@ -436,7 +439,7 @@ export class Inspector {
     const r = document.createElement('div');
     r.className = 'field';
     const id = `f_${Math.random().toString(36).slice(2, 8)}`;
-    r.innerHTML = `<label for="${id}">${label}</label><input type="range" id="${id}"><input class="num" inputmode="decimal" aria-label="${label || key} 數值">`;
+    r.innerHTML = `<label for="${id}">${label}</label><input type="range" id="${id}"><input class="num" inputmode="decimal" aria-label="${_t('{name} 數值', { name: label || key })}">`;
     const range = r.querySelector('input[type=range]');
     const num = r.querySelector('.num');
     const val = (f) => (typeof f === 'function' ? f(this.store.selectedClip) : f);

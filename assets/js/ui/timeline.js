@@ -7,6 +7,7 @@ import {
 import { rulerStep, formatRulerLabel, clamp } from '../core/time.js';
 import { icon } from './icons.js';
 import { escapeHtml } from './dialogs.js';
+import { _t } from '../i18n.js';
 
 export const PAD = 16;             // 時間 0 左邊的留白（px）
 const SNAP_PX = 8;                 // 吸附距離（px）
@@ -83,15 +84,15 @@ export class Timeline {
       const row = document.createElement('div');
       row.className = 'tl-head';
       const vis = t.kind === 'video'
-        ? `<button class="icon-btn ${t.hidden ? 'on' : ''}" data-act="hidden" title="${t.hidden ? '顯示軌道' : '隱藏軌道'}" aria-pressed="${t.hidden}">${icon(t.hidden ? 'eyeOff' : 'eye')}</button>`
+        ? `<button class="icon-btn ${t.hidden ? 'on' : ''}" data-act="hidden" title="${t.hidden ? _t('顯示軌道') : _t('隱藏軌道')}" aria-pressed="${t.hidden}">${icon(t.hidden ? 'eyeOff' : 'eye')}</button>`
         : '';
       row.innerHTML = `
         <span class="kind ${t.kind}"></span><span class="name">${escapeHtml(t.name)}</span>
         ${vis}
-        <button class="icon-btn ${t.muted ? 'on' : ''}" data-act="muted" title="${t.muted ? '取消靜音' : '靜音'}" aria-pressed="${t.muted}">${icon(t.muted ? 'volumeOff' : 'volume')}</button>
-        <button class="icon-btn ${t.locked ? 'on' : ''}" data-act="locked" title="${t.locked ? '解鎖' : '鎖定'}" aria-pressed="${t.locked}">${icon(t.locked ? 'lock' : 'unlock')}</button>
+        <button class="icon-btn ${t.muted ? 'on' : ''}" data-act="muted" title="${t.muted ? _t('取消靜音') : _t('靜音')}" aria-pressed="${t.muted}">${icon(t.muted ? 'volumeOff' : 'volume')}</button>
+        <button class="icon-btn ${t.locked ? 'on' : ''}" data-act="locked" title="${t.locked ? _t('解鎖') : _t('鎖定')}" aria-pressed="${t.locked}">${icon(t.locked ? 'lock' : 'unlock')}</button>
         <span class="spacer"></span>
-        ${counts[t.kind] > 1 ? `<button class="icon-btn" data-act="remove" title="刪除軌道">${icon('close', 'icon-sm')}</button>` : ''}`;
+        ${counts[t.kind] > 1 ? `<button class="icon-btn" data-act="remove" title="${_t('刪除軌道')}">${icon('close', 'icon-sm')}</button>` : ''}`;
       row.addEventListener('click', (e) => {
         const act = e.target.closest('[data-act]')?.dataset.act;
         if (!act) return;
@@ -99,7 +100,7 @@ export class Timeline {
         if (act === 'remove') {
           const n = proj.clips.filter(c => c.trackId === t.id).length;
           this.store.commit(removeTrack(proj, t.id));
-          if (n) this.emitToast?.(`已刪除軌道 ${t.name} 與 ${n} 個片段`, { undo: true });
+          if (n) this.emitToast?.(_t('已刪除軌道 {track} 與 {n} 個片段', { track: t.name, n }), { undo: true });
         } else {
           this.store.commit(updateTrack(proj, t.id, { [act]: !t[act] }));
         }
@@ -147,7 +148,7 @@ export class Timeline {
       el.classList.toggle('tiny', w < 18);
       el.querySelector('.clip-fade.in').style.width = `${c.fadeIn * this.pps}px`;
       el.querySelector('.clip-fade.out').style.width = `${c.fadeOut * this.pps}px`;
-      const label = c.type === 'text' ? (c.text.content.split('\n')[0] || '文字') : (c.name || p.media[c.mediaId]?.name || c.type);
+      const label = c.type === 'text' ? (c.text.content.split('\n')[0] || _t('文字')) : (c.name || p.media[c.mediaId]?.name || c.type);
       const speed = c.speed !== 1 ? `<span class="speed">${c.speed}×</span>` : '';
       const muted = c.muted ? icon('volumeOff') : '';
       el.querySelector('.clip-label').innerHTML = `${icon(TYPE_ICON[c.type])}<span>${escapeHtml(label)}</span>${speed}${muted}`;
@@ -165,7 +166,7 @@ export class Timeline {
       if (first) {
         const hint = document.createElement('div');
         hint.className = 'tl-empty';
-        hint.innerHTML = `${icon('upload', 'icon-sm')}把素材拖到這裡，或在素材卡片上按 ＋`;
+        hint.innerHTML = `${icon('upload', 'icon-sm')}${_t('把素材拖到這裡，或在素材卡片上按 ＋')}`;
         first.appendChild(hint);
       }
     }
@@ -485,9 +486,9 @@ export class Timeline {
     if (!outward || Math.abs(wanted - got) * this.pps < 30) return false;
     const fromMedia = c.type === 'video' || c.type === 'audio';
     let msg;
-    if (edge === 'start') msg = fromMedia && c.srcIn < 1e-6 ? '已經是素材的開頭，不能再往左拉長' : got <= 1e-6 ? '已經在時間軸最前面' : '前面有其他片段擋住';
-    else msg = fromMedia && Math.abs(c.srcIn + c.duration * c.speed - mediaLimit(next, c)) < 1e-3 ? '已經是素材的結尾，不能再往右拉長' : '後面有其他片段擋住';
-    this.emitToast?.(`${msg}。要移動整段片段，請按住片段中間拖曳。`);
+    if (edge === 'start') msg = fromMedia && c.srcIn < 1e-6 ? _t('已經是素材的開頭，不能再往左拉長') : got <= 1e-6 ? _t('已經在時間軸最前面') : _t('前面有其他片段擋住');
+    else msg = fromMedia && Math.abs(c.srcIn + c.duration * c.speed - mediaLimit(next, c)) < 1e-3 ? _t('已經是素材的結尾，不能再往右拉長') : _t('後面有其他片段擋住');
+    this.emitToast?.(_t('{reason}。要移動整段片段，請按住片段中間拖曳。', { reason: msg }));
     return true;
   }
 

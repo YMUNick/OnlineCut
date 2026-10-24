@@ -23,6 +23,7 @@ import { icon } from './ui/icons.js';
 import { makeSampleFiles } from './samples.js';
 import { unpackProject, isProjectFileName, findRelinkTarget } from './core/project-file.js';
 import { openSaveProjectDialog } from './ui/project-dialog.js';
+import { _t, translateDom, languageSwitch } from './i18n.js';
 
 const $ = (id) => document.getElementById(id);
 const LS_TL_HEIGHT = 'onlinecut.timelineHeight';
@@ -35,7 +36,10 @@ function hydrateIcons(root = document) {
     el.dataset.iconDone = '1';
   });
 }
+translateDom();
 hydrateIcons();
+$('btnShortcuts').before(languageSwitch('ghost-btn lang-btn'));
+document.documentElement.classList.remove('i18n-pending');
 
 // ---------- 核心物件 ----------
 const store = new Store(createProject());
@@ -49,7 +53,7 @@ const player = new Player({
   onState: (playing) => {
     const b = $('btnPlay');
     b.innerHTML = icon(playing ? 'pause' : 'play');
-    b.setAttribute('aria-label', playing ? '暫停' : '播放');
+    b.setAttribute('aria-label', playing ? _t('暫停') : _t('播放'));
     document.body.classList.toggle('is-playing', playing);
   },
   onFrame: (layouts) => preview.setLayouts(layouts),
@@ -71,7 +75,7 @@ const timeline = new Timeline({
   onScrubStart: () => player.pause(),
   onDropMedia: (mediaId, trackId, t) => addMediaToTimeline(mediaId, { trackId, start: t }),
 });
-timeline.emitToast = (msg, { undo } = {}) => toast(msg, undo ? { action: { label: '復原', run: () => store.undo() } } : {});
+timeline.emitToast = (msg, { undo } = {}) => toast(msg, undo ? { action: { label: _t('復原'), run: () => store.undo() } } : {});
 
 const mediaPanel = new MediaPanel({
   store, runtime,
@@ -162,7 +166,7 @@ function setSaveState(text, cls = '') {
 }
 function scheduleSave() {
   clearTimeout(saveTimer);
-  setSaveState('儲存中…', 'saving');
+  setSaveState(_t('儲存中…'), 'saving');
   saveTimer = setTimeout(saveNow, 600);
 }
 async function saveNow() {
@@ -171,10 +175,10 @@ async function saveNow() {
   saving = true;
   try {
     await db.saveProject(store.project);
-    setSaveState('已自動儲存');
+    setSaveState(_t('已自動儲存'));
   } catch (e) {
     console.error(e);
-    setSaveState('無法儲存', 'error');
+    setSaveState(_t('無法儲存'), 'error');
   } finally {
     saving = false;
     if (pendingSave) { pendingSave = false; saveNow(); }
@@ -195,7 +199,7 @@ async function persistMedia(id, file, handle) {
     db.saveFile(id, file)
       .catch((e) => {
         console.warn(e);
-        toast(`「${file.name}」無法存到瀏覽器（空間可能不足）；重新整理後需要再匯入一次`, { type: 'error', timeout: 7000 });
+        toast(_t('「{name}」無法存到瀏覽器（空間可能不足）；重新整理後需要再匯入一次', { name: file.name }), { type: 'error', timeout: 7000 });
       })
       .finally(() => busy.end());
     return 'copied';
@@ -210,13 +214,15 @@ function explainLargeFiles(results) {
   const none = results.filter(r => r.how === 'none').map(r => r.name);
   const handled = results.filter(r => r.how === 'handle');
   if (none.length) {
-    const first = none.length > 1 ? `「${none[0]}」等 ${none.length} 個大型檔案` : `「${none[0]}」是大型檔案，`;
-    toast(`${first}沒有複製到瀏覽器，不會多佔硬碟空間。重新整理或下次開啟時需要再匯入一次（會自動接回）。`, { timeout: 10000 });
+    const msg = none.length > 1
+      ? _t('「{name}」等 {n} 個大型檔案沒有複製到瀏覽器，不會多佔硬碟空間。重新整理或下次開啟時需要再匯入一次（會自動接回）。', { name: none[0], n: none.length })
+      : _t('「{name}」是大型檔案，沒有複製到瀏覽器，不會多佔硬碟空間。重新整理或下次開啟時需要再匯入一次（會自動接回）。', { name: none[0] });
+    toast(msg, { timeout: 10000 });
   }
   let tipShown = false;
   try { tipShown = localStorage.getItem('onlinecut.handleTip') === '1'; } catch { /* 私密模式 */ }
   if (handled.length && !tipShown) {
-    toast('大型檔案只記住它在電腦上的位置，沒有複製，不會多佔硬碟空間。下次開啟時會請你允許讀取。', { timeout: 10000 });
+    toast(_t('大型檔案只記住它在電腦上的位置，沒有複製，不會多佔硬碟空間。下次開啟時會請你允許讀取。'), { timeout: 10000 });
     try { localStorage.setItem('onlinecut.handleTip', '1'); } catch { /* 私密模式 */ }
   }
 }
@@ -249,8 +255,8 @@ async function grantPendingHandles() {
   const ok = results.filter(r => r === 'ok').length;
   const gone = results.filter(r => r === 'gone' || r === 'changed').length;
   const denied = results.filter(r => r === 'denied' || r === 'prompt').length;
-  if (ok) toast(`已接回 ${ok} 個大型素材`, { type: 'success' });
-  if (gone) toast(`有 ${gone} 個大型素材找不到原始檔案（可能被移動、改名或修改過），請重新匯入`, { type: 'error', timeout: 9000 });
+  if (ok) toast(_t('已接回 {n} 個大型素材', { n: ok }), { type: 'success' });
+  if (gone) toast(_t('有 {n} 個大型素材找不到原始檔案（可能被移動、改名或修改過），請重新匯入', { n: gone }), { type: 'error', timeout: 9000 });
   if (denied) {
     list.filter((_, i) => results[i] === 'denied' || results[i] === 'prompt').forEach(x => pendingHandles.push(x));
     askForHandlePermission();
@@ -260,7 +266,7 @@ async function grantPendingHandles() {
 function askForHandlePermission() {
   if (!pendingHandles.length) return;
   const n = pendingHandles.length;
-  toast(`有 ${n} 個大型素材沒有複製到瀏覽器，需要你允許讀取電腦上的原始檔案`, { timeout: 0, action: { label: '允許讀取', run: grantPendingHandles } });
+  toast(_t('有 {n} 個大型素材沒有複製到瀏覽器，需要你允許讀取電腦上的原始檔案', { n }), { timeout: 0, action: { label: _t('允許讀取'), run: grantPendingHandles } });
 }
 
 async function loadSaved() {
@@ -281,9 +287,9 @@ async function loadSaved() {
     else if (r !== 'ok') gone++;
   }
   store.replace(project);
-  setSaveState('已載入上次的專案');
-  if (missing) toast(`有 ${missing} 個素材需要重新匯入（大型檔案或空間不足時沒有存到瀏覽器），匯入同一個檔案就會自動接回`, { type: 'error', timeout: 9000 });
-  if (gone) toast(`有 ${gone} 個大型素材找不到原始檔案（可能被移動、改名或修改過），請重新匯入`, { type: 'error', timeout: 9000 });
+  setSaveState(_t('已載入上次的專案'));
+  if (missing) toast(_t('有 {n} 個素材需要重新匯入（大型檔案或空間不足時沒有存到瀏覽器），匯入同一個檔案就會自動接回', { n: missing }), { type: 'error', timeout: 9000 });
+  if (gone) toast(_t('有 {n} 個大型素材找不到原始檔案（可能被移動、改名或修改過），請重新匯入', { n: gone }), { type: 'error', timeout: 9000 });
   askForHandlePermission();
 }
 
@@ -297,14 +303,14 @@ async function pickMediaFiles() {
   if (typeof window.showOpenFilePicker !== 'function') { $('fileInput').click(); return; }
   let handles;
   try {
-    handles = await window.showOpenFilePicker({ multiple: true, id: 'onlinecut-media', types: [{ description: '影片、音樂、圖片', accept: MEDIA_ACCEPT }] });
+    handles = await window.showOpenFilePicker({ multiple: true, id: 'onlinecut-media', types: [{ description: _t('影片、音樂、圖片'), accept: MEDIA_ACCEPT }] });
   } catch (e) {
     if (e?.name !== 'AbortError') $('fileInput').click(); // 不是使用者取消：退回一般選檔
     return;
   }
   const entries = [];
   for (const h of handles) {
-    try { entries.push({ file: await h.getFile(), handle: h }); } catch (e) { toast(`無法讀取「${h.name}」`, { type: 'error' }); }
+    try { entries.push({ file: await h.getFile(), handle: h }); } catch (e) { toast(_t('無法讀取「{name}」', { name: h.name }), { type: 'error' }); }
   }
   importEntries(entries);
 }
@@ -321,7 +327,7 @@ async function importEntries(entries) {
   // 專案檔另外處理（一次只開一個）
   const projectFiles = list.filter(e => isProjectFileName(e.file.name));
   if (projectFiles.length) {
-    if (projectFiles.length > 1 || list.length > projectFiles.length) toast('一次只能開啟一個專案檔，其他檔案沒有匯入', { timeout: 6000 });
+    if (projectFiles.length > 1 || list.length > projectFiles.length) toast(_t('一次只能開啟一個專案檔，其他檔案沒有匯入'), { timeout: 6000 });
     await openProjectFile(projectFiles[0].file);
     return;
   }
@@ -341,7 +347,7 @@ async function importEntries(entries) {
   }
   if (relinked.length) {
     store.emit('change', { type: 'media' });
-    toast(`已接回 ${relinked.length} 個遺失的素材`, { type: 'success' });
+    toast(_t('已接回 {n} 個遺失的素材', { n: relinked.length }), { type: 'success' });
   }
   list = rest;
   if (!list.length) { explainLargeFiles(persisted); return; }
@@ -358,7 +364,7 @@ async function importEntries(entries) {
       imported.push(info);
       persisted.push({ name: file.name, how: await persistMedia(info.id, file, handle) });
     } catch (e) {
-      toast(e.message || `無法匯入 ${file.name}`, { type: 'error', timeout: 6000 });
+      toast(e.message || _t('無法匯入 {name}', { name: file.name }), { type: 'error', timeout: 6000 });
     } finally {
       mediaPanel.removeLoading(key);
     }
@@ -373,10 +379,10 @@ async function importEntries(entries) {
     let p = store.project;
     for (const m of imported) p = addClip(p, m.type, { mediaId: m.id }).project;
     store.commit(p);
-    toast(`已匯入 ${imported.length} 個素材並排到時間軸`, { type: 'success' });
+    toast(_t('已匯入 {n} 個素材並排到時間軸', { n: imported.length }), { type: 'success' });
     requestAnimationFrame(() => timeline.fit());
   } else {
-    toast(`已匯入 ${imported.length} 個素材，拖到時間軸或按 ＋ 加入`, { type: 'success' });
+    toast(_t('已匯入 {n} 個素材，拖到時間軸或按 ＋ 加入', { n: imported.length }), { type: 'success' });
   }
 }
 
@@ -389,7 +395,7 @@ function matchAspect(media) {
 function addMediaToTimeline(mediaId, { trackId = null, start = null } = {}) {
   const m = store.project.media[mediaId];
   if (!m) return;
-  if (!runtime.has(mediaId)) { toast('這個素材的檔案遺失了，請重新匯入', { type: 'error' }); return; }
+  if (!runtime.has(mediaId)) { toast(_t('這個素材的檔案遺失了，請重新匯入'), { type: 'error' }); return; }
   if (!store.project.clips.length && (m.type === 'video' || m.type === 'image')) matchAspect(m);
   const { project, clip } = addClip(store.project, m.type, { mediaId, trackId, start: start ?? player.time, name: m.name });
   store.commit(project, { select: [clip.id] });
@@ -418,9 +424,9 @@ function applyLayoutAction(id) {
   if (id === 'none') {
     let clips = store.selection.map(cid => getClip(p, cid)).filter(c => c?.frame && unlocked(c));
     if (!clips.length) clips = p.clips.filter(c => c.frame && unlocked(c) && t >= c.start && t < c.start + c.duration);
-    if (!clips.length) { toast('播放頭這裡沒有套用版型的畫面'); return; }
+    if (!clips.length) { toast(_t('播放頭這裡沒有套用版型的畫面')); return; }
     store.commit(applyLayout(p, clips.map(c => c.id), 'none').project);
-    toast(`已取消 ${clips.length} 個畫面的版型`, { action: { label: '復原', run: () => store.undo() } });
+    toast(_t('已取消 {n} 個畫面的版型', { n: clips.length }), { action: { label: _t('復原'), run: () => store.undo() } });
     return;
   }
   const layout = LAYOUTS.find(l => l.id === id);
@@ -428,14 +434,16 @@ function applyLayoutAction(id) {
   if (!layout || !slots) return;
   const clips = layoutCandidates(p, store.selection.filter(cid => { const c = getClip(p, cid); return c && unlocked(c); }), t, slots);
   if (clips.length < 2) {
-    toast('版型需要兩段同時出現的影片或圖片：把第二段放到上面的影像軌、跟第一段時間重疊，再點一次版型。', { timeout: 8000 });
+    toast(_t('版型需要兩段同時出現的影片或圖片：把第二段放到上面的影像軌、跟第一段時間重疊，再點一次版型。'), { timeout: 8000 });
     return;
   }
   const { project, applied } = applyLayout(p, clips.map(c => c.id), id);
   const top = clips[clips.length - 1];
   store.commit(project, { select: [top.id] });
-  const extra = slots > applied ? `（這個版型有 ${slots} 格，目前只有 ${applied} 個畫面）` : '';
-  toast(`已套用「${layout.label}」${extra}`, { type: 'success', action: { label: '復原', run: () => store.undo() } });
+  const msg = slots > applied
+    ? _t('已套用「{name}」（這個版型有 {slots} 格，目前只有 {n} 個畫面）', { name: layout.label, slots, n: applied })
+    : _t('已套用「{name}」', { name: layout.label });
+  toast(msg, { type: 'success', action: { label: _t('復原'), run: () => store.undo() } });
 }
 
 /** 加入內建圖案：背景放最下面，貼圖和邊框放最上面 */
@@ -455,7 +463,7 @@ async function addGraphic(id) {
       info = r.info;
       persistMedia(info.id, file, null);
     } catch (e) {
-      toast(`無法加入圖案：${e.message}`, { type: 'error' });
+      toast(_t('無法加入圖案：{reason}', { reason: e.message }), { type: 'error' });
       return;
     }
     p = addMedia(store.project, info);
@@ -496,10 +504,10 @@ async function removeMediaItem(id) {
   const m = store.project.media[id];
   if (!m) return;
   const n = store.project.clips.filter(c => c.mediaId === id).length;
-  if (n && !(await confirmDialog({ title: '移除素材？', message: `「${m.name}」在時間軸上有 ${n} 個片段，會一起刪除。`, confirmText: '移除', danger: true }))) return;
+  if (n && !(await confirmDialog({ title: _t('移除素材？'), message: _t('「{name}」在時間軸上有 {n} 個片段，會一起刪除。', { name: m.name, n }), confirmText: _t('移除'), danger: true }))) return;
   store.commit(removeMedia(store.project, id));
   // 檔案保留到下次清理才刪，讓「復原」還能用
-  toast(`已移除「${m.name}」`, { action: { label: '復原', run: () => store.undo() } });
+  toast(_t('已移除「{name}」', { name: m.name }), { action: { label: _t('復原'), run: () => store.undo() } });
 }
 
 /** 清掉沒有被專案（含 undo 紀錄）用到的檔案 */
@@ -517,7 +525,7 @@ async function collectGarbage() {
 // ============================================================
 function splitSelected() {
   const { project, created } = splitAtPlayhead(store.project, player.time, store.selection);
-  if (!created.length) { toast('播放頭沒有落在可以分割的片段上'); return; }
+  if (!created.length) { toast(_t('播放頭沒有落在可以分割的片段上')); return; }
   store.commit(project);
 }
 
@@ -525,9 +533,9 @@ function deleteSelected(ripple = store.ripple) {
   if (!store.selection.length) return;
   const n = store.selection.length;
   const next = deleteClips(store.project, store.selection, { ripple });
-  if (next === store.project) { toast('鎖定的軌道不能刪除片段'); return; }
+  if (next === store.project) { toast(_t('鎖定的軌道不能刪除片段')); return; }
   store.commit(next, { select: [] });
-  toast(`已刪除 ${n} 個片段${ripple ? '並自動補位' : ''}`, { action: { label: '復原', run: () => store.undo() } });
+  toast(ripple ? _t('已刪除 {n} 個片段並自動補位', { n }) : _t('已刪除 {n} 個片段', { n }), { action: { label: _t('復原'), run: () => store.undo() } });
 }
 
 function duplicateSelected() {
@@ -550,14 +558,14 @@ async function resetWorkspace() {
 
 async function newProject() {
   const ok = !hasWork() || await confirmDialog({
-    title: '開新專案？', message: '目前的專案和匯入的素材會從這台裝置上刪除，這個動作無法復原。請先確認需要的影片已經匯出。', confirmText: '開新專案', danger: true,
+    title: _t('開新專案？'), message: _t('目前的專案和匯入的素材會從這台裝置上刪除，這個動作無法復原。請先確認需要的影片已經匯出。'), confirmText: _t('開新專案'), danger: true,
   });
   if (!ok) return;
   await resetWorkspace();
   store.replace(createProject());
   player.seek(0);
   timeline.setZoom(60, 0);
-  toast('已建立新專案');
+  toast(_t('已建立新專案'));
 }
 
 // ============================================================
@@ -568,21 +576,21 @@ async function openProjectFile(file) {
   if (opening) return;
   opening = true;
   player.pause();
-  const dismiss = toast(`正在讀取「${file.name}」…`, { timeout: 0 });
+  const dismiss = toast(_t('正在讀取「{name}」…', { name: file.name }), { timeout: 0 });
   try {
     let data;
     try {
       data = await unpackProject(file);
     } catch (e) {
-      toast(e.message || '無法開啟專案檔', { type: 'error', timeout: 8000 });
+      toast(e.message || _t('無法開啟專案檔'), { type: 'error', timeout: 8000 });
       return; // 目前的專案不受影響
     } finally {
       dismiss();
     }
     if (hasWork() && !(await confirmDialog({
-      title: '開啟專案檔？',
-      message: `「${data.project.name}」會取代目前的專案，目前的專案和素材會從這台裝置上刪除。需要保留的話，請先從「專案 → 下載專案檔」備份。`,
-      confirmText: '開啟', danger: true,
+      title: _t('開啟專案檔？'),
+      message: _t('「{name}」會取代目前的專案，目前的專案和素材會從這台裝置上刪除。需要保留的話，請先從「專案 → 下載專案檔」備份。', { name: data.project.name }),
+      confirmText: _t('開啟'), danger: true,
     }))) return;
 
     await resetWorkspace();
@@ -597,14 +605,18 @@ async function openProjectFile(file) {
     await saveNow();
     player.seek(0);
     requestAnimationFrame(() => timeline.fit());
-    toast(`已開啟「${data.project.name}」`, { type: 'success' });
+    toast(_t('已開啟「{name}」', { name: data.project.name }), { type: 'success' });
     const lost = data.missing.length + data.corrupted.length;
     if (lost) {
-      const why = data.corrupted.length ? `（其中 ${data.corrupted.length} 個在專案檔裡已損毀）` : data.includesMedia ? '' : '（這個專案檔沒有包含素材）';
-      toast(`有 ${lost} 個素材需要重新匯入${why}，匯入同名、同大小的原始檔就會自動接回`, { type: 'error', timeout: 10000 });
+      const msg = data.corrupted.length
+        ? _t('有 {n} 個素材需要重新匯入（其中 {bad} 個在專案檔裡已損毀），匯入同名、同大小的原始檔就會自動接回', { n: lost, bad: data.corrupted.length })
+        : data.includesMedia
+          ? _t('有 {n} 個素材需要重新匯入，匯入同名、同大小的原始檔就會自動接回', { n: lost })
+          : _t('有 {n} 個素材需要重新匯入（這個專案檔沒有包含素材），匯入同名、同大小的原始檔就會自動接回', { n: lost });
+      toast(msg, { type: 'error', timeout: 10000 });
     }
-    if (notStored) toast(`有 ${notStored} 個素材無法存到瀏覽器（空間可能不足）；重新整理後需要再開啟一次這個專案檔`, { type: 'error', timeout: 8000 });
-    if (large) toast(`有 ${large} 個大型素材沒有複製到瀏覽器，不會多佔硬碟空間；重新整理後需要再開啟一次這個專案檔`, { timeout: 10000 });
+    if (notStored) toast(_t('有 {n} 個素材無法存到瀏覽器（空間可能不足）；重新整理後需要再開啟一次這個專案檔', { n: notStored }), { type: 'error', timeout: 8000 });
+    if (large) toast(_t('有 {n} 個大型素材沒有複製到瀏覽器，不會多佔硬碟空間；重新整理後需要再開啟一次這個專案檔', { n: large }), { timeout: 10000 });
   } finally {
     opening = false;
   }
@@ -616,11 +628,11 @@ function saveProjectFile() {
 }
 
 async function loadSample() {
-  const t = toast('正在產生範例素材…', { timeout: 0 });
+  const t = toast(_t('正在產生範例素材…'), { timeout: 0 });
   try {
     if (store.project.clips.length) {
       t();
-      if (!(await confirmDialog({ title: '載入範例專案？', message: '範例會加到目前的專案裡（不會刪掉你的東西）。', confirmText: '加入範例' }))) return;
+      if (!(await confirmDialog({ title: _t('載入範例專案？'), message: _t('範例會加到目前的專案裡（不會刪掉你的東西）。'), confirmText: _t('加入範例') }))) return;
     }
     const { images, music } = await makeSampleFiles();
     const infos = [];
@@ -641,19 +653,19 @@ async function loadSample() {
     });
     const musicInfo = infos.find(i => i.type === 'audio');
     p = addClip(p, 'audio', { mediaId: musicInfo.id, start: base, duration: 12, fadeOut: 2, volume: 0.8, name: musicInfo.name }).project;
-    p = addClip(p, 'text', { trackId: v2.id, start: base + 0.4, duration: 3.2, fadeIn: 0.5, fadeOut: 0.5, text: { content: 'OnlineCut', fontSize: 170, fontWeight: 900 }, name: '標題' }).project;
-    p = addClip(p, 'text', { trackId: v2.id, start: base + 4.4, duration: 3.2, fadeIn: 0.3, fadeOut: 0.3, text: { content: '免費、免安裝、不上傳', fontSize: 64, fontWeight: 700, background: 'rgba(0, 0, 0, 0.55)' }, transform: { y: 380 }, name: '字幕' }).project;
-    p = addClip(p, 'text', { trackId: v2.id, start: base + 8.4, duration: 3.2, fadeIn: 0.4, fadeOut: 0.8, text: { content: '開始剪你的故事', fontSize: 110, fontWeight: 900, color: '#ffd23f', strokeColor: '#1b1440', strokeWidth: 6, shadow: false }, name: '結尾' }).project;
-    if (p.name === '未命名專案') p = renameProject(p, '我的第一支影片');
+    p = addClip(p, 'text', { trackId: v2.id, start: base + 0.4, duration: 3.2, fadeIn: 0.5, fadeOut: 0.5, text: { content: 'OnlineCut', fontSize: 170, fontWeight: 900 }, name: _t('標題') }).project;
+    p = addClip(p, 'text', { trackId: v2.id, start: base + 4.4, duration: 3.2, fadeIn: 0.3, fadeOut: 0.3, text: { content: _t('免費、免安裝、不上傳'), fontSize: 64, fontWeight: 700, background: 'rgba(0, 0, 0, 0.55)' }, transform: { y: 380 }, name: _t('字幕') }).project;
+    p = addClip(p, 'text', { trackId: v2.id, start: base + 8.4, duration: 3.2, fadeIn: 0.4, fadeOut: 0.8, text: { content: _t('開始剪你的故事'), fontSize: 110, fontWeight: 900, color: '#ffd23f', strokeColor: '#1b1440', strokeWidth: 6, shadow: false }, name: _t('結尾') }).project;
+    if (p.name === _t('未命名專案')) p = renameProject(p, _t('我的第一支影片'));
     store.commit(p);
     player.seek(base + 1.2);
     requestAnimationFrame(() => timeline.fit());
     t();
-    toast('範例專案已載入，按空白鍵播放看看', { type: 'success' });
+    toast(_t('範例專案已載入，按空白鍵播放看看'), { type: 'success' });
   } catch (e) {
     t();
     console.error(e);
-    toast(`無法產生範例：${e.message}`, { type: 'error' });
+    toast(_t('無法產生範例：{reason}', { reason: e.message }), { type: 'error' });
   }
 }
 
@@ -710,7 +722,7 @@ $('welcomeSample').onclick = loadSample;
 $('welcomeImport').onclick = () => pickMediaFiles();
 $('btnAddVideoTrack').onclick = () => store.commit(addTrack(store.project, 'video'));
 $('btnAddAudioTrack').onclick = () => store.commit(addTrack(store.project, 'audio'));
-$('btnFullscreen').onclick = () => $('frame').requestFullscreen?.().catch(() => toast('瀏覽器不允許全螢幕'));
+$('btnFullscreen').onclick = () => $('frame').requestFullscreen?.().catch(() => toast(_t('瀏覽器不允許全螢幕')));
 
 function toggleBtn(id, key) {
   const b = $(id);
@@ -756,32 +768,32 @@ function stepFrames(n) {
 // 快捷鍵
 // ============================================================
 const SHORTCUTS = [
-  ['播放', [
-    ['播放 / 暫停', ['空白鍵']],
-    ['上一格 / 下一格', ['←', '→']],
-    ['往前 / 往後 1 秒', ['Shift', '← →']],
-    ['跳到開頭 / 結尾', ['Home', 'End']],
+  [_t('播放'), [
+    [_t('播放 / 暫停'), [_t('空白鍵')]],
+    [_t('上一格 / 下一格'), ['←', '→']],
+    [_t('往前 / 往後 1 秒'), ['Shift', '← →']],
+    [_t('跳到開頭 / 結尾'), ['Home', 'End']],
   ]],
-  ['剪輯', [
-    ['在播放頭分割', ['S']],
-    ['刪除', ['Delete']],
-    ['刪除並補位（波紋刪除）', ['Shift', 'Delete']],
-    ['複製片段', ['Ctrl', 'D']],
-    ['全選', ['Ctrl', 'A']],
-    ['取消選取', ['Esc']],
-    ['復原 / 重做', ['Ctrl', 'Z', '/', 'Ctrl', 'Shift', 'Z']],
+  [_t('剪輯'), [
+    [_t('在播放頭分割'), ['S']],
+    [_t('刪除'), ['Delete']],
+    [_t('刪除並補位（波紋刪除）'), ['Shift', 'Delete']],
+    [_t('複製片段'), ['Ctrl', 'D']],
+    [_t('全選'), ['Ctrl', 'A']],
+    [_t('取消選取'), ['Esc']],
+    [_t('復原 / 重做'), ['Ctrl', 'Z', '/', 'Ctrl', 'Shift', 'Z']],
   ]],
-  ['時間軸', [
-    ['放大 / 縮小', ['Ctrl', '+', '/', '-']],
-    ['符合視窗', ['Shift', 'Z']],
-    ['開關吸附', ['N']],
-    ['暫時不吸附（拖曳時）', ['按住 Alt']],
+  [_t('時間軸'), [
+    [_t('放大 / 縮小'), ['Ctrl', '+', '/', '-']],
+    [_t('符合視窗'), ['Shift', 'Z']],
+    [_t('開關吸附'), ['N']],
+    [_t('暫時不吸附（拖曳時）'), [_t('按住 Alt')]],
   ]],
-  ['其他', [
-    ['匯出影片', ['Ctrl', 'E']],
-    ['開啟專案檔', ['Ctrl', 'O']],
-    ['下載專案檔', ['Ctrl', 'S']],
-    ['顯示快捷鍵', ['?']],
+  [_t('其他'), [
+    [_t('匯出影片'), ['Ctrl', 'E']],
+    [_t('開啟專案檔'), ['Ctrl', 'O']],
+    [_t('下載專案檔'), ['Ctrl', 'S']],
+    [_t('顯示快捷鍵'), ['?']],
   ]],
 ];
 
@@ -789,7 +801,7 @@ function showShortcuts() {
   const isMac = /Mac|iPhone|iPad/.test(navigator.platform);
   const html = `<dl class="shortcut-list">${SHORTCUTS.map(([g, items]) => `<div class="shortcut-group">${g}</div>${items.map(([label, keys]) =>
     `<dt>${label}</dt><dd>${keys.map(k => (k === '/' ? '<span style="color:var(--text-3)">/</span>' : `<kbd>${isMac && k === 'Ctrl' ? '⌘' : k}</kbd>`)).join('')}</dd>`).join('')}`).join('')}</dl>`;
-  openModal({ title: '鍵盤快捷鍵', content: html });
+  openModal({ title: _t('鍵盤快捷鍵'), content: html });
 }
 
 function isTyping(e) {
@@ -837,7 +849,7 @@ document.addEventListener('keydown', (e) => {
   if (k === 's' || k === 'S') { handled(); splitSelected(); return; }
   if (k === 'Delete' || k === 'Backspace') { handled(); deleteSelected(e.shiftKey || store.ripple); return; }
   if (k === 'Escape') { store.select([]); return; }
-  if (k === 'n' || k === 'N') { store.setView({ snap: !store.snap }); paintSnap(); toast(store.snap ? '吸附：開' : '吸附：關'); return; }
+  if (k === 'n' || k === 'N') { store.setView({ snap: !store.snap }); paintSnap(); toast(store.snap ? _t('吸附：開') : _t('吸附：關')); return; }
   if (k === 'Z' && e.shiftKey) { handled(); timeline.fit(); return; }
   if (k === '?') { handled(); showShortcuts(); }
 });
@@ -911,7 +923,7 @@ window.addEventListener('beforeunload', (e) => {
   const warn = () => {
     if (warned) return;
     warned = true;
-    toast('OnlineCut 已經在另一個分頁開啟。兩邊都會自動儲存到同一個地方，同時編輯會互相覆蓋，建議只留一個分頁。', { type: 'error', timeout: 15000 });
+    toast(_t('OnlineCut 已經在另一個分頁開啟。兩邊都會自動儲存到同一個地方，同時編輯會互相覆蓋，建議只留一個分頁。'), { type: 'error', timeout: 15000 });
   };
   ch.onmessage = (e) => {
     if (!e.data || e.data.from === me) return;

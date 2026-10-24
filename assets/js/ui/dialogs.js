@@ -1,6 +1,7 @@
 // 通知（toast）與對話框
 
 import { icon } from './icons.js';
+import { _t } from '../i18n.js';
 
 /** 匯出、打包專案檔等長時間工作進行中時，關閉分頁要先提醒 */
 export const busy = {
@@ -53,7 +54,7 @@ export function openModal({ title, content, footer = '', dismissible = true, onC
   backdrop.className = 'modal-backdrop';
   backdrop.innerHTML = `
     <div class="modal" role="dialog" aria-modal="true" aria-labelledby="modalTitle">
-      <div class="modal-head"><h2 id="modalTitle"></h2><button class="icon-btn" data-close aria-label="關閉">${icon('close')}</button></div>
+      <div class="modal-head"><h2 id="modalTitle"></h2><button class="icon-btn" data-close aria-label="${_t('關閉')}">${icon('close')}</button></div>
       <div class="modal-body"></div>
       <div class="modal-foot"></div>
     </div>`;
@@ -101,7 +102,7 @@ function trapFocus(container, e) {
 }
 
 /** 確認對話框，回傳 Promise<boolean> */
-export function confirmDialog({ title, message, confirmText = '確定', cancelText = '取消', danger = false }) {
+export function confirmDialog({ title, message, confirmText = _t('確定'), cancelText = _t('取消'), danger = false }) {
   return new Promise(resolve => {
     let result = false;
     const footer = document.createElement('div');

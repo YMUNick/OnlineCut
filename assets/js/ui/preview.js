@@ -3,6 +3,7 @@
 import { getClip, updateClip, getTrack, MIN_FRAME } from '../core/project.js';
 import { hitTest } from '../engine/renderer.js';
 import { clamp } from '../core/time.js';
+import { _t } from '../i18n.js';
 
 const CENTER_SNAP_PX = 8;
 
@@ -71,12 +72,12 @@ export class Preview {
     if (L.framed) {
       box.classList.add('framed');
       if (clip.frame?.shape === 'circle') box.classList.add('circle');
-      box.title = '拖曳移動畫面框，拉角落調整大小；按住 Alt 拖曳或用滾輪調整取景';
+      box.title = _t('拖曳移動畫面框，拉角落調整大小；按住 Alt 拖曳或用滾輪調整取景');
     }
     const locked = getTrack(this.store.project, clip.trackId)?.locked;
     if (!locked) {
       box.innerHTML = ['nw', 'ne', 'sw', 'se'].map(h => `<span class="sel-handle ${h}" data-h="${h}"></span>`).join('');
-      if (!L.framed) box.insertAdjacentHTML('beforeend', '<span class="sel-rotate" data-h="rot" title="旋轉（按住 Shift 以 15° 為單位）"></span>');
+      if (!L.framed) box.insertAdjacentHTML('beforeend', `<span class="sel-rotate" data-h="rot" title="${_t('旋轉（按住 Shift 以 15° 為單位）')}"></span>`);
     }
     ov.appendChild(box);
   }

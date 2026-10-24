@@ -3,6 +3,20 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
+  <script>
+    // 英文版：翻譯完成前先不顯示，避免閃一下中文（萬一腳本出錯，1.5 秒後照樣顯示）
+    (function () {
+      try {
+        var q = new URLSearchParams(location.search).get('lang'), s = localStorage.getItem('onlinecut.lang');
+        var l = q || s || (navigator.languages && navigator.languages[0]) || navigator.language || '';
+        if (!/^zh/i.test(l)) {
+          document.documentElement.classList.add('i18n-pending');
+          setTimeout(function () { document.documentElement.classList.remove('i18n-pending'); }, 1500);
+        }
+      } catch (e) { /* 照常顯示 */ }
+    })();
+  </script>
+  <style>html.i18n-pending body { visibility: hidden; }</style>
   <title>編輯器 · OnlineCut</title>
   <meta name="description" content="OnlineCut 線上剪輯器：多軌時間軸、文字、濾鏡、淡入淡出，匯出 MP4。檔案只在你的瀏覽器裡處理。">
   <meta name="theme-color" content="#0e0f11">

@@ -61,6 +61,9 @@
 .nav-links { display: flex; gap: 4px; margin-left: auto; }
 .nav-links a { text-decoration: none; color: var(--ink-2); font-size: 14.5px; font-weight: 500; padding: 8px 12px; border-radius: 8px; }
 .nav-links a:hover { color: var(--ink); background: var(--bg-2); }
+.lang-btn { flex: none; border: 1px solid var(--line, rgba(0,0,0,.12)); background: transparent; color: var(--ink-2); border-radius: 8px; padding: 6px 10px; font: inherit; font-size: 13px; font-weight: 700; cursor: pointer; }
+.lang-btn:hover { color: var(--ink); background: var(--bg-2); }
+.nav-links + .lang-btn { margin-left: 0; }
 
 /* Hero */
 .hero { padding: clamp(48px, 8vw, 96px) 0 0; position: relative; overflow: hidden; }
@@ -170,6 +173,7 @@
 @media (max-width: 640px) {
   .nav-links { display: none; }
   .nav-inner { justify-content: space-between; }
+  .lang-btn { margin-left: auto; }
   .feature-grid, .steps { grid-template-columns: 1fr; }
   .hide-sm { display: none; }
   .btn-lg { height: 50px; padding: 0 22px; font-size: 16px; }

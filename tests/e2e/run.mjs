@@ -18,6 +18,8 @@ const TYPES = { '.html': 'text/html', '.js': 'text/javascript', '.mjs': 'text/ja
 
 let failures = 0, passed = 0;
 async function test(name, fn) {
+  // ONLY=關鍵字：只跑名稱包含它的測試（獨立的測試才適合單獨跑）
+  if (process.env.ONLY && !name.includes(process.env.ONLY)) return;
   const t0 = Date.now();
   try {
     await fn();
@@ -92,7 +94,8 @@ const server = process.env.BASE_URL ? null : await serve();
 const BASE = process.env.BASE_URL ? process.env.BASE_URL.replace(/\/+$/, '') : `http://127.0.0.1:${server.address().port}`;
 console.log(`測試網址：${BASE}`);
 const browser = await chromium.launch();
-const context = await browser.newContext({ viewport: { width: 1440, height: 900 }, acceptDownloads: true });
+// 測試用中文介面（Playwright 的瀏覽器預設是英文）；英文版另外測
+const context = await browser.newContext({ viewport: { width: 1440, height: 900 }, acceptDownloads: true, locale: 'zh-TW' });
 const page = await context.newPage();
 const errors = [];
 page.on('pageerror', e => errors.push(e.message));
@@ -1387,6 +1390,120 @@ try {
     await waitFor(() => page.evaluate(() => decodeURIComponent(document.querySelector('[data-graphic="mint"] img').src).includes('width="1080" height="1920"')), 3000, '直式縮圖');
   });
 
+  console.log('\n英文版');
+  /** 畫面上還看得到的中文（語言切換按鈕、使用者自己的內容除外） */
+  const leftoverChinese = (pg) => pg.evaluate(() => {
+    const CJK = /[　-〿一-鿿＀-￯]/;
+    const skip = (el) => el.closest('[lang^="zh"], .media-name, .clip-label, #projectName, textarea, script, style');
+    const out = new Set();
+    const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT);
+    while (walker.nextNode()) {
+      const n = walker.currentNode;
+      if (CJK.test(n.nodeValue) && !skip(n.parentElement) && n.parentElement.getClientRects().length) out.add(n.nodeValue.trim().slice(0, 60));
+    }
+    for (const el of document.querySelectorAll('[title],[aria-label],[placeholder]')) {
+      if (skip(el)) continue;
+      for (const a of ['title', 'aria-label', 'placeholder']) { const v = el.getAttribute(a); if (v && CJK.test(v)) out.add(`${a}=${v.slice(0, 60)}`); }
+    }
+    if (CJK.test(document.title)) out.add(`title=${document.title}`);
+    return [...out];
+  });
+  const englishContext = async (opts = {}) => {
+    const ctx = await browser.newContext({ locale: 'en-US', viewport: { width: 1440, height: 900 }, ...opts });
+    await ctx.route(/fonts\.(googleapis|gstatic)\.com/, r => r.fulfill({ body: '', contentType: 'text/css' }));
+    return ctx;
+  };
+
+  await test('英文首頁：沒有漏翻的中文；可以切換回中文', async () => {
+    const ctx = await englishContext();
+    const pg = await ctx.newPage();
+    const errs = [];
+    pg.on('pageerror', e => errs.push(e.message));
+    await pg.goto(`${BASE}/index.html`);
+    await pg.waitForFunction(() => document.documentElement.lang === 'en');
+    assert.deepEqual(await leftoverChinese(pg), []);
+    assert.match(await pg.title(), /Free online video editor/);
+    assert.equal(await pg.evaluate(() => getComputedStyle(document.body).visibility), 'visible');
+    assert.match(await pg.getAttribute('.hero img', 'src'), /editor-preview-en\.jpg/);
+    await pg.click('.lang-btn');
+    await pg.waitForFunction(() => document.querySelector('.nav-links a')?.textContent === '功能');
+    assert.match(pg.url(), /lang=zh-TW/);
+    // 語言選擇會記住：直接打開編輯器也是中文
+    await pg.goto(`${BASE}/editor.html`);
+    await pg.waitForFunction(() => window.__oc);
+    assert.equal(await pg.textContent('#btnExport'), '匯出');
+    assert.deepEqual(errs, []);
+    await ctx.close();
+  });
+
+  await test('英文編輯器：各個畫面都沒有漏翻的中文', async () => {
+    const ctx = await englishContext();
+    const pg = await ctx.newPage();
+    const errs = [];
+    pg.on('pageerror', e => errs.push(e.message));
+    await pg.goto(`${BASE}/editor.html`);
+    await pg.waitForFunction(() => window.__oc);
+    const found = new Map();
+    const check = async (where) => { for (const s of await leftoverChinese(pg)) found.set(s, where); };
+    await check('開啟時');
+    await pg.click('#welcomeSample');
+    await pg.waitForFunction(() => window.__oc.store.project.clips.length >= 7, null, { timeout: 15000 });
+    assert.equal(await pg.evaluate(() => window.__oc.store.project.name), 'My first video');
+    await check('範例專案');
+    for (const tab of ['text', 'graphics', 'layout', 'media']) { await pg.click(`.tab[data-tab="${tab}"]`); await check(`${tab} 分頁`); }
+    for (const type of ['image', 'text', 'audio']) {
+      await pg.evaluate((type) => window.__oc.store.select([window.__oc.store.project.clips.find(c => c.type === type).id]), type);
+      await check(`${type} 屬性`);
+    }
+    // 套用版型後的畫面框
+    await pg.evaluate(async () => {
+      const P = await import('./assets/js/core/project.js');
+      const { store } = window.__oc;
+      const img = store.project.clips.find(c => c.type === 'image');
+      store.commit(P.updateClip(store.project, img.id, { frame: { w: 0.5 } }), { select: [img.id] });
+    });
+    await pg.waitForSelector('[data-unframe]');
+    await check('畫面框');
+    await pg.evaluate(() => window.__oc.store.select([]));
+    await check('專案設定');
+    await pg.click('#btnExport');
+    await pg.waitForSelector('.modal');
+    await pg.waitForTimeout(300);
+    await check('匯出對話框');
+    await pg.keyboard.press('Escape');
+    await pg.click('#btnProjectMenu');
+    await check('專案選單');
+    await pg.click('#btnSaveProject');
+    await pg.waitForSelector('.modal');
+    await check('專案檔對話框');
+    await pg.keyboard.press('Escape');
+    await pg.keyboard.press('?');
+    await pg.waitForSelector('.modal');
+    await check('快捷鍵');
+    await pg.keyboard.press('Escape');
+    await pg.keyboard.press('Control+a');
+    await check('多選');
+    assert.deepEqual([...found].map(([s, w]) => `${w}：${s}`), []);
+    assert.deepEqual(errs, []);
+    await ctx.close();
+  });
+
+  await test('英文版匯入與匯出：通知與完成畫面都是英文', async () => {
+    const ctx = await englishContext({ acceptDownloads: true });
+    const pg = await ctx.newPage();
+    await pg.goto(`${BASE}/editor.html`);
+    await pg.waitForFunction(() => window.__oc);
+    await pg.setInputFiles('#fileInput', [fx.red]);
+    await pg.waitForSelector('.toast:has-text("Imported 1 file and added it to the timeline")');
+    await pg.click('#btnExport');
+    await pg.click('#exRes .seg-btn[data-v="480"]');
+    await pg.click('.modal [data-go]');
+    await pg.waitForSelector('.export-done', { timeout: 60000 });
+    assert.match(await pg.textContent('.export-done'), /Your video is ready/);
+    assert.deepEqual(await leftoverChinese(pg), []);
+    await ctx.close();
+  });
+
   console.log('\n首頁與手機版');
   await test('首頁載入、連結到編輯器', async () => {
     const p2 = await context.newPage();
@@ -1401,7 +1518,7 @@ try {
 
   for (const [name, url] of [['首頁', 'index.html'], ['編輯器', 'editor.html']]) {
     await test(`${name}在手機寬度沒有橫向捲軸`, async () => {
-      const p3 = await browser.newPage({ viewport: { width: 375, height: 760 } });
+      const p3 = await browser.newPage({ viewport: { width: 375, height: 760 }, locale: 'zh-TW' });
       await p3.route(/fonts\.(googleapis|gstatic)\.com/, r => r.fulfill({ body: '', contentType: 'text/css' }));
       await p3.goto(`${BASE}/${url}`);
       await p3.waitForTimeout(600);

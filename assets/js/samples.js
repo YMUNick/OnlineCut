@@ -1,9 +1,10 @@
+import { _t } from './i18n.js';
 // 範例素材：在瀏覽器裡即時產生（漸層插圖 + 合成音樂），不需要下載任何東西
 
 const SCENES = [
-  { name: '範例-晨光.png', stops: ['#ff9a5a', '#ff5c39', '#5b2a86'], sun: '#ffe2a8', hills: ['#3a1f5c', '#24123d'] },
-  { name: '範例-海岸.png', stops: ['#7fd3ff', '#2f7de1', '#0c2a5b'], sun: '#ffffff', hills: ['#0f3b6e', '#082245'] },
-  { name: '範例-夜城.png', stops: ['#1b1440', '#3b1d6e', '#ff5c8a'], sun: '#ffd6f0', hills: ['#140d2c', '#0a0618'] },
+  { name: _t('範例-晨光.png'), stops: ['#ff9a5a', '#ff5c39', '#5b2a86'], sun: '#ffe2a8', hills: ['#3a1f5c', '#24123d'] },
+  { name: _t('範例-海岸.png'), stops: ['#7fd3ff', '#2f7de1', '#0c2a5b'], sun: '#ffffff', hills: ['#0f3b6e', '#082245'] },
+  { name: _t('範例-夜城.png'), stops: ['#1b1440', '#3b1d6e', '#ff5c8a'], sun: '#ffd6f0', hills: ['#140d2c', '#0a0618'] },
 ];
 
 function sceneBlob({ stops, sun, hills }, w = 1920, h = 1080) {
@@ -88,6 +89,6 @@ function musicBlob(seconds = 12, rate = 44100) {
 /** 回傳 File 陣列與一個「怎麼排」的說明 */
 export async function makeSampleFiles() {
   const images = await Promise.all(SCENES.map(async s => new File([await sceneBlob(s)], s.name, { type: 'image/png' })));
-  const music = new File([musicBlob(12)], '範例-配樂.wav', { type: 'audio/wav' });
+  const music = new File([musicBlob(12)], _t('範例-配樂.wav'), { type: 'audio/wav' });
   return { images, music };
 }

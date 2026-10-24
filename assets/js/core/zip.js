@@ -1,3 +1,4 @@
+import { _t } from '../i18n.js';
 // 最小的 ZIP 讀寫（瀏覽器與 Node 都能用）
 //
 // 寫入：只用「不壓縮」(store)。影片本身已經壓縮過，再壓也省不了多少，而且可以直接用 Blob 串接，
@@ -62,7 +63,7 @@ export async function createZip(entries, { onProgress = () => {}, date = new Dat
   const enc = new TextEncoder();
   const { time, date: dosDate } = dosDateTime(date);
   const total = entries.reduce((s, e) => s + e.blob.size, 0);
-  if (entries.length > 0xffff) throw new ZipError('檔案數量太多', 'too-many');
+  if (entries.length > 0xffff) throw new ZipError(_t('檔案數量太多'), 'too-many');
   const names = new Set();
   let done = 0;
   const parts = [];
@@ -70,11 +71,11 @@ export async function createZip(entries, { onProgress = () => {}, date = new Dat
   let offset = 0;
 
   for (const { name, blob } of entries) {
-    if (names.has(name)) throw new ZipError(`重複的檔名：${name}`, 'duplicate');
+    if (names.has(name)) throw new ZipError(_t('重複的檔名：{name}', { name }), 'duplicate');
     names.add(name);
     const nameBytes = enc.encode(name);
-    if (nameBytes.length > 0xffff) throw new ZipError('檔名太長', 'name');
-    if (blob.size > MAX32 || offset > MAX32) throw new ZipError('專案檔超過 4GB，請改成不包含素材檔', 'too-large');
+    if (nameBytes.length > 0xffff) throw new ZipError(_t('檔名太長'), 'name');
+    if (blob.size > MAX32 || offset > MAX32) throw new ZipError(_t('專案檔超過 4GB，請改成不包含素材檔'), 'too-large');
     const crc = await crc32Blob(blob, (n) => { done += n; onProgress(done, total); });
 
     const local = new DataView(new ArrayBuffer(30));
@@ -110,7 +111,7 @@ export async function createZip(entries, { onProgress = () => {}, date = new Dat
   }
 
   const cdSize = central.reduce((s, p) => s + p.byteLength, 0);
-  if (offset > MAX32 || offset + cdSize > MAX32) throw new ZipError('專案檔超過 4GB，請改成不包含素材檔', 'too-large');
+  if (offset > MAX32 || offset + cdSize > MAX32) throw new ZipError(_t('專案檔超過 4GB，請改成不包含素材檔'), 'too-large');
   const end = new DataView(new ArrayBuffer(22));
   end.setUint32(0, 0x06054b50, true);
   end.setUint16(8, entries.length, true);
@@ -138,7 +139,7 @@ export async function looksLikeZip(blob) {
  */
 export async function readZip(blob) {
   const size = blob.size;
-  if (size < 22) throw new ZipError('不是有效的 ZIP 檔', 'not-zip');
+  if (size < 22) throw new ZipError(_t('不是有效的 ZIP 檔'), 'not-zip');
   const tailStart = Math.max(0, size - 22 - 0xffff);
   const tail = await bytesOf(blob, tailStart, size);
   const tv = new DataView(tail.buffer);
@@ -146,12 +147,12 @@ export async function readZip(blob) {
   for (let i = tail.length - 22; i >= 0; i--) {
     if (tv.getUint32(i, true) === 0x06054b50) { eocd = i; break; }
   }
-  if (eocd < 0) throw new ZipError('不是有效的 ZIP 檔（找不到檔案目錄，可能下載不完整）', 'not-zip');
+  if (eocd < 0) throw new ZipError(_t('不是有效的 ZIP 檔（找不到檔案目錄，可能下載不完整）'), 'not-zip');
   const count = tv.getUint16(eocd + 10, true);
   const cdSize = tv.getUint32(eocd + 12, true);
   const cdOffset = tv.getUint32(eocd + 16, true);
-  if (cdOffset === MAX32 || count === 0xffff) throw new ZipError('不支援 ZIP64 格式', 'zip64');
-  if (cdOffset + cdSize > tailStart + eocd) throw new ZipError('ZIP 檔已損毀', 'corrupt');
+  if (cdOffset === MAX32 || count === 0xffff) throw new ZipError(_t('不支援 ZIP64 格式'), 'zip64');
+  if (cdOffset + cdSize > tailStart + eocd) throw new ZipError(_t('ZIP 檔已損毀'), 'corrupt');
 
   const cd = await bytesOf(blob, cdOffset, cdOffset + cdSize);
   const v = new DataView(cd.buffer);
@@ -159,7 +160,7 @@ export async function readZip(blob) {
   const entries = new Map();
   let p = 0;
   for (let i = 0; i < count; i++) {
-    if (p + 46 > cd.length || v.getUint32(p, true) !== 0x02014b50) throw new ZipError('ZIP 檔已損毀', 'corrupt');
+    if (p + 46 > cd.length || v.getUint32(p, true) !== 0x02014b50) throw new ZipError(_t('ZIP 檔已損毀'), 'corrupt');
     const flags = v.getUint16(p + 8, true);
     const method = v.getUint16(p + 10, true);
     const crc = v.getUint32(p + 16, true);
@@ -169,26 +170,26 @@ export async function readZip(blob) {
     const extraLen = v.getUint16(p + 30, true);
     const commentLen = v.getUint16(p + 32, true);
     const localOffset = v.getUint32(p + 42, true);
-    if (p + 46 + nameLen > cd.length) throw new ZipError('ZIP 檔已損毀', 'corrupt');
+    if (p + 46 + nameLen > cd.length) throw new ZipError(_t('ZIP 檔已損毀'), 'corrupt');
     const name = dec.decode(cd.subarray(p + 46, p + 46 + nameLen)).replace(/\\/g, '/');
     p += 46 + nameLen + extraLen + commentLen;
     if (name.endsWith('/')) continue; // 資料夾
-    if (flags & 1) throw new ZipError('不支援加密的 ZIP 檔', 'encrypted');
-    if (method !== 0 && method !== 8) throw new ZipError(`不支援的壓縮方式（${method}）`, 'method');
+    if (flags & 1) throw new ZipError(_t('不支援加密的 ZIP 檔'), 'encrypted');
+    if (method !== 0 && method !== 8) throw new ZipError(_t('不支援的壓縮方式（{method}）', { method }), 'method');
     entries.set(name, { name, method, crc, compressedSize, size: uncompressed, localOffset });
   }
 
   // 讀本機檔頭找到資料起點（本機檔頭的 extra 長度可能跟目錄裡不同）
   for (const e of entries.values()) {
-    if (e.localOffset + 30 > size) throw new ZipError('ZIP 檔已損毀（資料不完整）', 'truncated');
+    if (e.localOffset + 30 > size) throw new ZipError(_t('ZIP 檔已損毀（資料不完整）'), 'truncated');
     const h = new DataView((await bytesOf(blob, e.localOffset, e.localOffset + 30)).buffer);
-    if (h.getUint32(0, true) !== 0x04034b50) throw new ZipError('ZIP 檔已損毀', 'corrupt');
+    if (h.getUint32(0, true) !== 0x04034b50) throw new ZipError(_t('ZIP 檔已損毀'), 'corrupt');
     const start = e.localOffset + 30 + h.getUint16(26, true) + h.getUint16(28, true);
-    if (start + e.compressedSize > size) throw new ZipError('ZIP 檔已損毀（資料不完整）', 'truncated');
+    if (start + e.compressedSize > size) throw new ZipError(_t('ZIP 檔已損毀（資料不完整）'), 'truncated');
     const raw = blob.slice(start, start + e.compressedSize);
     e.blob = async (type = '') => {
       if (e.method === 0) return type ? raw.slice(0, raw.size, type) : raw;
-      if (typeof DecompressionStream === 'undefined') throw new ZipError('這個瀏覽器無法解壓縮', 'method');
+      if (typeof DecompressionStream === 'undefined') throw new ZipError(_t('這個瀏覽器無法解壓縮'), 'method');
       const out = await new Response(raw.stream().pipeThrough(new DecompressionStream('deflate-raw'))).blob();
       return type ? out.slice(0, out.size, type) : out;
     };
