@@ -345,6 +345,10 @@ html[lang="en"] .tab .icon { display: none; }
 .tl-head .spacer { flex: 1; }
 
 .tl-scroll { flex: 1 1 auto; overflow: auto; position: relative; min-width: 0; }
+/* 時間軸的橫向捲軸比較常用，做得明顯一點 */
+.tl-scroll::-webkit-scrollbar { height: 14px; }
+.tl-scroll::-webkit-scrollbar-thumb { background: #3d434c; background-clip: padding-box; border: 3px solid transparent; }
+.tl-scroll::-webkit-scrollbar-thumb:hover { background: #4d545f; background-clip: padding-box; border: 3px solid transparent; }
 .tl-content { position: relative; min-height: 100%; }
 .tl-ruler { position: sticky; top: 0; z-index: 3; height: 28px; width: 100%; display: block; background: var(--panel); border-bottom: 1px solid var(--line); cursor: text; }
 .tl-tracks { position: relative; }

@@ -673,8 +673,8 @@ async function loadSample() {
 // 按鈕
 // ============================================================
 $('btnPlay').onclick = () => player.toggle();
-$('btnStart').onclick = () => player.seek(0);
-$('btnEnd').onclick = () => player.seek(getDuration(store.project));
+$('btnStart').onclick = () => seekAndReveal(0);
+$('btnEnd').onclick = () => seekAndReveal(getDuration(store.project));
 $('btnPrev').onclick = () => stepFrames(-1);
 $('btnNext').onclick = () => stepFrames(1);
 $('btnUndo').onclick = () => store.undo();
@@ -758,10 +758,16 @@ const nameInput = $('projectName');
 nameInput.addEventListener('input', () => store.commit(renameProject(store.project, nameInput.value), { key: 'rename' }));
 nameInput.addEventListener('keydown', (e) => { if (e.key === 'Enter' || e.key === 'Escape') nameInput.blur(); });
 
+/** 用鍵盤或按鈕移動播放頭：時間軸跟著捲到看得到的地方 */
+function seekAndReveal(t) {
+  player.seek(t);
+  timeline.reveal(player.time);
+}
+
 function stepFrames(n) {
   player.pause();
   const fps = store.project.fps;
-  player.seek(Math.round(player.time * fps + n) / fps);
+  seekAndReveal(Math.round(player.time * fps + n) / fps);
 }
 
 // ============================================================
@@ -786,6 +792,7 @@ const SHORTCUTS = [
   [_t('時間軸'), [
     [_t('放大 / 縮小'), ['Ctrl', '+', '/', '-']],
     [_t('符合視窗'), ['Shift', 'Z']],
+    [_t('左右捲動 / 縮放'), [_t('滾輪'), '/', 'Ctrl', _t('滾輪')]],
     [_t('開關吸附'), ['N']],
     [_t('暫時不吸附（拖曳時）'), [_t('按住 Alt')]],
   ]],
@@ -841,11 +848,11 @@ document.addEventListener('keydown', (e) => {
     handled();
     player.pause();
     const dir = k === 'ArrowLeft' ? -1 : 1;
-    player.seek(e.shiftKey ? player.time + dir : Math.round(player.time * fps + dir) / fps);
+    seekAndReveal(e.shiftKey ? player.time + dir : Math.round(player.time * fps + dir) / fps);
     return;
   }
-  if (k === 'Home') { handled(); player.seek(0); return; }
-  if (k === 'End') { handled(); player.seek(getDuration(store.project)); return; }
+  if (k === 'Home') { handled(); seekAndReveal(0); return; }
+  if (k === 'End') { handled(); seekAndReveal(getDuration(store.project)); return; }
   if (k === 's' || k === 'S') { handled(); splitSelected(); return; }
   if (k === 'Delete' || k === 'Backspace') { handled(); deleteSelected(e.shiftKey || store.ripple); return; }
   if (k === 'Escape') { store.select([]); return; }

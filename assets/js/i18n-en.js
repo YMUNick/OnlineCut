@@ -87,6 +87,8 @@ export default {
   '時間軸': 'Timeline',
   '放大 / 縮小': 'Zoom in / out',
   '符合視窗': 'Zoom to fit',
+  '左右捲動 / 縮放': 'Scroll / zoom',
+  '滾輪': 'Wheel',
   '開關吸附': 'Toggle snapping',
   '暫時不吸附（拖曳時）': 'Don’t snap (while dragging)',
   '按住 Alt': 'Hold Alt',

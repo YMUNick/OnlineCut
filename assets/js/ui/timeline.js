@@ -220,6 +220,14 @@ export class Timeline {
     if (x > s.scrollLeft + s.clientWidth - 40 || x < s.scrollLeft) s.scrollLeft = Math.max(0, x - s.clientWidth * 0.2);
   }
 
+  /** 用鍵盤或按鈕移動播放頭時，播放頭跑出畫面就捲過去（往右翻到左邊、往左翻到右邊） */
+  reveal(t) {
+    const x = this.timeToX(t);
+    const s = this.els.scroll;
+    if (x > s.scrollLeft + s.clientWidth - 40) s.scrollLeft = x - s.clientWidth * 0.2;
+    else if (x < s.scrollLeft + 40) s.scrollLeft = Math.max(0, x - s.clientWidth * 0.8);
+  }
+
   // ---------- 片段背景（縮圖膠卷 / 波形），只畫看得到的範圍 ----------
   queueBackgrounds() {
     if (this.bgQueued) return;
@@ -344,23 +352,42 @@ export class Timeline {
       if (e.ctrlKey || e.metaKey) {
         e.preventDefault();
         this.zoomBy(Math.exp(-e.deltaY * 0.01), this.clientXToTime(e.clientX));
+        return;
       }
+      // 一般滑鼠滾輪：左右捲動時間軸。觸控板橫向滑動交給瀏覽器；
+      // 軌道多到需要上下捲時，在尺規上滾或按住 Shift 才左右捲
+      if (Math.abs(e.deltaX) >= Math.abs(e.deltaY)) return;
+      const canScrollDown = s.scrollHeight > s.clientHeight + 1;
+      if (canScrollDown && !e.shiftKey && e.target !== this.els.ruler) return;
+      e.preventDefault();
+      const unit = e.deltaMode === 1 ? 16 : e.deltaMode === 2 ? s.clientWidth : 1;
+      s.scrollLeft += e.deltaY * unit;
     }, { passive: false });
     this.els.headList.addEventListener('wheel', (e) => { s.scrollTop += e.deltaY; }, { passive: true });
   }
 
+  /** 拖曳播放頭（尺規、播放頭把手、軌道空白處）。拖到左右邊緣會自動捲動 */
+  startScrub(e) {
+    e.preventDefault();
+    this.onScrubStart();
+    let last = e;
+    const apply = (ev) => this.onSeek(Math.max(0, this.clientXToTime(ev.clientX)));
+    const scroller = this.autoScroll(() => apply(last));
+    const move = (ev) => { last = ev; scroller.track(ev); apply(ev); };
+    apply(e);
+    this.drag = { type: 'scrub' };
+    window.addEventListener('pointermove', move);
+    this.onDragEnd(() => {
+      window.removeEventListener('pointermove', move);
+      scroller.stop();
+      this.drag = null;
+    });
+  }
+
   bindRuler() {
-    const startScrub = (e) => {
-      e.preventDefault();
-      this.onScrubStart();
-      const move = (ev) => this.onSeek(Math.max(0, this.clientXToTime(ev.clientX)));
-      move(e);
-      const up = () => { window.removeEventListener('pointermove', move); window.removeEventListener('pointerup', up); };
-      window.addEventListener('pointermove', move);
-      window.addEventListener('pointerup', up);
-    };
-    this.els.ruler.addEventListener('pointerdown', startScrub);
-    this.els.playhead.querySelector('.tl-playhead-cap').addEventListener('pointerdown', startScrub);
+    const start = (e) => { if (e.button === 0) this.startScrub(e); };
+    this.els.ruler.addEventListener('pointerdown', start);
+    this.els.playhead.querySelector('.tl-playhead-cap').addEventListener('pointerdown', start);
   }
 
   trackAtClientY(clientY) {
@@ -376,10 +403,9 @@ export class Timeline {
       if (e.button !== 0) return;
       const clipEl = e.target.closest('.clip');
       if (!clipEl) {
-        // 點空白處：取消選取並移動播放頭
+        // 點空白處：取消選取並移動播放頭（按住可以拖曳）
         this.store.select([]);
-        this.onScrubStart();
-        this.onSeek(Math.max(0, this.clientXToTime(e.clientX)));
+        this.startScrub(e);
         return;
       }
       e.preventDefault();

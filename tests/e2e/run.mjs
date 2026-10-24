@@ -1154,6 +1154,80 @@ try {
     assert.ok(await page.evaluate(() => window.__oc.timeline.els.scroll.scrollLeft > 0), '有捲動');
   });
 
+  /** 放大時間軸，讓畫面只看得到一小段 */
+  const zoomedIn = async () => {
+    await setupPacked();
+    await page.evaluate(() => { window.__oc.store.setView({ pxPerSec: 300 }); window.__oc.player.seek(0); });
+    await page.waitForTimeout(100);
+    await page.evaluate(() => { window.__oc.timeline.els.scroll.scrollLeft = 0; });
+    return page.locator('#tlScroll').boundingBox();
+  };
+  const scrollLeft = () => page.evaluate(() => window.__oc.timeline.els.scroll.scrollLeft);
+
+  await test('拖曳播放頭到右邊緣會自動捲動，可以拖到畫面外更晚的時間；拖回左邊緣也會捲回來', async () => {
+    const sc = await zoomedIn();
+    const visibleEnd = (sc.width - 16) / 300;
+    const cap = await page.locator('.tl-playhead-cap').boundingBox();
+    const y = cap.y + cap.height / 2;
+    await page.mouse.move(cap.x + cap.width / 2, y);
+    await page.mouse.down();
+    await page.mouse.move(sc.x + sc.width - 8, y, { steps: 8 });
+    await page.waitForTimeout(1200);
+    const right = (await state()).time;
+    assert.ok(right > visibleEnd + 0.5, `播放頭拖到 ${right.toFixed(2)}s，一開始只看得到 ${visibleEnd.toFixed(2)}s`);
+    const sl = await scrollLeft();
+    assert.ok(sl > 0, '有往右捲');
+    await page.mouse.move(sc.x + 8, y, { steps: 8 });
+    await page.waitForTimeout(1200);
+    await page.mouse.up();
+    assert.ok(await scrollLeft() < sl, '往左也會捲');
+    assert.ok((await state()).time < right - 1, `往左拖到 ${(await state()).time.toFixed(2)}s`);
+  });
+
+  await test('在軌道空白處按住拖曳也能移動播放頭', async () => {
+    const sc = await zoomedIn();
+    const rows = await page.locator('.tl-track').all();
+    const empty = await rows[0].boundingBox(); // 最上面的影像軌是空的
+    await page.mouse.move(sc.x + 100, empty.y + empty.height / 2);
+    await page.mouse.down();
+    await page.mouse.move(sc.x + sc.width - 8, empty.y + empty.height / 2, { steps: 8 });
+    await page.waitForTimeout(800);
+    await page.mouse.up();
+    assert.ok(await scrollLeft() > 0, '有捲動');
+    assert.ok((await state()).time > (sc.width - 16) / 300, '播放頭跟著到畫面外');
+  });
+
+  await test('一般滑鼠滾輪可以左右捲動時間軸；Ctrl + 滾輪是縮放', async () => {
+    const sc = await zoomedIn();
+    await page.mouse.move(sc.x + sc.width / 2, sc.y + sc.height / 2);
+    await page.mouse.wheel(0, 600);
+    await waitFor(async () => (await scrollLeft()) > 300, 2000, '往右捲');
+    const sl = await scrollLeft();
+    await page.mouse.wheel(0, -400);
+    await waitFor(async () => (await scrollLeft()) < sl - 200, 2000, '往左捲');
+    const pps = await page.evaluate(() => window.__oc.store.pxPerSec);
+    await page.keyboard.down('Control');
+    await page.mouse.wheel(0, 200);
+    await page.keyboard.up('Control');
+    assert.ok(await page.evaluate(() => window.__oc.store.pxPerSec) < pps, 'Ctrl + 滾輪縮小');
+  });
+
+  await test('用鍵盤移動播放頭到畫面外時，時間軸會跟著捲過去', async () => {
+    await zoomedIn();
+    await page.evaluate(() => document.activeElement?.blur());
+    await page.keyboard.press('End');
+    const visible = () => page.evaluate(() => {
+      const tl = window.__oc.timeline, s = tl.els.scroll, x = tl.timeToX(window.__oc.player.time);
+      return x >= s.scrollLeft && x <= s.scrollLeft + s.clientWidth;
+    });
+    assert.ok(await visible(), 'End 之後看得到播放頭');
+    await page.keyboard.press('Home');
+    assert.ok(await visible(), 'Home 之後看得到播放頭');
+    assert.equal(await scrollLeft(), 0);
+    for (let i = 0; i < 6; i++) await page.keyboard.press('Shift+ArrowRight');
+    assert.ok(await visible(), 'Shift + → 一秒一秒往後也看得到');
+  });
+
   await test('很短的片段：中間抓得到可以移動（不會變成修剪）', async () => {
     const { blue } = await setupPacked();
     await page.evaluate(() => window.__oc.store.setView({ pxPerSec: 6 })); // 2 秒只有 12px
