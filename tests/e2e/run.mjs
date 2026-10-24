@@ -26,6 +26,8 @@ async function test(name, fn) {
   } catch (e) {
     failures++;
     console.log(`  ✗ ${name}\n      ${String(e.stack || e).split('\n').slice(0, 6).join('\n      ')}`);
+    // 在 GitHub Actions 上另外輸出成 annotation，不用下載完整紀錄就看得到哪裡失敗
+    if (process.env.GITHUB_ACTIONS) console.log(`::error title=${name.replace(/[\r\n:,]/g, ' ')}::${String(e.message || e).slice(0, 600).replace(/%/g, '%25').replace(/\r/g, '%0D').replace(/\n/g, '%0A')}`);
   }
 }
 
