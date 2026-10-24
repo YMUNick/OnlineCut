@@ -139,8 +139,11 @@ export class MediaPanel {
         card.dataset.mediaId = m.id;
         card.tabIndex = 0;
         card.innerHTML = `
-          <div class="media-thumb">${icon(TYPE_ICON[m.type], 'icon-lg')}</div>
-          <span class="media-badge"></span>
+          <div class="media-visual">
+            <div class="media-thumb">${icon(TYPE_ICON[m.type], 'icon-lg')}</div>
+            <span class="media-badge"></span>
+            <span class="media-missing">${icon('alert', 'icon-sm')}需要重新匯入</span>
+          </div>
           <div class="media-actions">
             <button data-act="add" title="加到播放頭位置" aria-label="加到時間軸">${icon('plus')}</button>
             <button data-act="remove" title="從專案移除" aria-label="移除素材">${icon('trash')}</button>
@@ -155,8 +158,10 @@ export class MediaPanel {
       card.title = m.name;
       const dims = m.width ? `${m.width}×${m.height}` : '';
       const missing = !this.runtime.has(m.id);
-      card.querySelector('.media-sub').textContent = missing ? '檔案遺失，請重新匯入' : [TYPE_LABEL[m.type], dims, formatBytes(m.size)].filter(Boolean).join(' · ');
+      if (missing) card.title = `${m.name}\n檔案遺失：重新匯入同一個檔案（同名、同大小）就會自動接回`;
+      card.querySelector('.media-sub').textContent = missing ? '檔案遺失' : [TYPE_LABEL[m.type], dims, formatBytes(m.size)].filter(Boolean).join(' · ');
       card.classList.toggle('used', used.has(m.id));
+      card.classList.toggle('missing', missing);
       // 依新增時間排序（loading 卡片保留在最前面）
       if (prev) { if (prev.nextSibling !== card) prev.after(card); }
       else {

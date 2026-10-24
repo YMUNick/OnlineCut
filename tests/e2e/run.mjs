@@ -112,6 +112,17 @@ const state = () => page.evaluate(() => {
   const { store, player } = window.__oc;
   return { project: store.project, selection: store.selection, time: player.time, playing: player.playing, canUndo: store.history.canUndo };
 });
+/** 比對兩個專案，失敗時列出不同的欄位路徑 */
+function diffPaths(a, b, p = '') {
+  if (a === b) return [];
+  if (typeof a !== 'object' || typeof b !== 'object' || !a || !b) return [`${p || '(root)'}: ${JSON.stringify(a)} ≠ ${JSON.stringify(b)}`];
+  const keys = new Set([...Object.keys(a), ...Object.keys(b)]);
+  return [...keys].flatMap(k => diffPaths(a[k], b[k], p ? `${p}.${k}` : k));
+}
+function assertSameProject(actual, expected) {
+  const d = diffPaths(actual, expected);
+  assert.deepEqual(d, [], `專案不一樣：\n${d.slice(0, 10).join('\n')}`);
+}
 const clipBox = async (id) => page.locator(`.clip[data-clip-id="${id}"]`).boundingBox();
 const waitFor = async (fn, timeout = 10000, label = 'condition') => {
   const end = Date.now() + timeout;
@@ -120,6 +131,12 @@ const waitFor = async (fn, timeout = 10000, label = 'condition') => {
 };
 
 try {
+  const newProjectUI = async () => {
+    await page.click('#btnProjectMenu');
+    await page.click('#btnNew');
+    if (await page.locator('.modal .danger-btn').count()) await page.click('.modal .danger-btn');
+    await waitFor(async () => { const s = await state(); return !s.project.clips.length && !Object.keys(s.project.media).length; }, 5000, '清空');
+  };
   console.log('編輯器');
   await page.goto(`${BASE}/editor.html`);
   await page.waitForFunction(() => window.__oc);
@@ -465,9 +482,7 @@ try {
   });
 
   await test('手機直拍（有旋轉標記）的影片：預覽與匯出方向一致', async () => {
-    await page.click('#btnNew');
-    await page.click('.modal .danger-btn');
-    await waitFor(async () => (await state()).project.clips.length === 0, 5000, '清空');
+    await newProjectUI();
     await page.setInputFiles('#fileInput', [fx.rotated]);
     await waitFor(async () => (await state()).project.clips.length === 1, 10000, '匯入');
     assert.equal((await state()).project.aspect, '9:16', '顯示尺寸是直的');
@@ -498,9 +513,7 @@ try {
   });
 
   await test('直式影片匯入到空專案會切換成 9:16', async () => {
-    await page.click('#btnNew');
-    await page.click('.modal .danger-btn');
-    await waitFor(async () => (await state()).project.clips.length === 0, 5000, '清空');
+    await newProjectUI();
     await page.setInputFiles('#fileInput', [fx.portrait]);
     await waitFor(async () => (await state()).project.clips.length === 1, 10000, '匯入直式');
     assert.equal((await state()).project.aspect, '9:16');
@@ -541,6 +554,357 @@ try {
   await test('整個流程沒有 JS 錯誤', async () => {
     const real = errors.filter(e => !/Failed to load resource/.test(e));
     assert.deepEqual(real, []);
+  });
+
+  console.log('\n專案檔');
+  const downloadProject = async ({ includeMedia = true, name = 'e2e-project' } = {}) => {
+    await page.keyboard.press('Control+s');
+    await page.waitForSelector('.modal >> text=下載專案檔');
+    await page.fill('#pfName', name);
+    if (!includeMedia) await page.uncheck('#pfMedia');
+    const [dl] = await Promise.all([page.waitForEvent('download'), page.click('.modal [data-go]')]);
+    const out = path.join(tmp, `${name}-${includeMedia ? 'full' : 'lite'}.onlinecut`);
+    await dl.saveAs(out);
+    assert.equal(dl.suggestedFilename(), `${name}.onlinecut`);
+    await page.keyboard.press('Escape');
+    return out;
+  };
+  const openProjectViaInput = (file) => page.setInputFiles('#projectInput', file);
+  let original, fullFile, liteFile;
+
+  await test('新專案：只有素材（時間軸是空的）也會先確認', async () => {
+    await newProjectUI();
+    await page.setInputFiles('#fileInput', [fx.audio]);
+    await waitFor(async () => Object.keys((await state()).project.media).length === 1, 10000, '匯入');
+    await page.evaluate(() => window.__oc.store.commit(window.__oc.store.project.clips.reduce((p) => p, window.__oc.store.project)));
+    await page.evaluate(async () => {
+      const P = await import('./assets/js/core/project.js');
+      const s = window.__oc.store;
+      s.commit(P.deleteClips(s.project, s.project.clips.map(c => c.id)));
+    });
+    assert.equal((await state()).project.clips.length, 0);
+    await page.click('#btnProjectMenu');
+    await page.click('#btnNew');
+    assert.ok(await page.isVisible('.modal >> text=開新專案？'), '要跳確認');
+    await page.click('.modal [data-cancel]');
+    assert.equal(Object.keys((await state()).project.media).length, 1, '取消後素材還在');
+  });
+
+  await test('下載專案檔（含素材）：是標準 ZIP，內容齊全', async () => {
+    await newProjectUI();
+    await page.setInputFiles('#fileInput', [fx.video, fx.audio, fx.image]);
+    await waitFor(async () => (await state()).project.clips.length === 3, 15000, '匯入');
+    await page.click('.tab[data-tab="text"]');
+    await page.click('.text-preset[data-preset="caption"]');
+    await page.click('.tab[data-tab="media"]');
+    await page.fill('#projectName', '專案檔測試 / 第一集');
+    await page.keyboard.press('Enter');
+    original = (await state()).project;
+    fullFile = await downloadProject();
+    const listing = execFileSync('python3', ['-c', 'import zipfile,sys,json\nz=zipfile.ZipFile(sys.argv[1]); assert z.testzip() is None\nm=json.loads(z.read("project.json"))\nprint(json.dumps({"names": sorted(z.namelist()), "format": m["format"], "media": m["includesMedia"]}))', fullFile]).toString();
+    const info = JSON.parse(listing);
+    assert.equal(info.format, 'onlinecut-project');
+    assert.equal(info.media, true);
+    assert.equal(info.names.length, 4, info.names.join(','));
+    assert.ok(info.names.includes('project.json'));
+  });
+
+  await test('Ctrl+S 在輸入框裡也會開啟下載專案檔（不會跳出瀏覽器另存網頁）', async () => {
+    await page.click('#projectName');
+    await page.keyboard.press('Control+s');
+    assert.ok(await page.isVisible('.modal >> text=下載專案檔'));
+    await page.keyboard.press('Escape');
+  });
+
+  await test('下載專案檔（不含素材）：檔案很小', async () => {
+    liteFile = await downloadProject({ includeMedia: false, name: 'lite' });
+    assert.ok((await stat(liteFile)).size < 20000, `大小 ${(await stat(liteFile)).size}`);
+    assert.ok((await stat(fullFile)).size > 30000);
+  });
+
+  await test('開啟專案檔前會確認；按取消時目前的專案不變', async () => {
+    const before = (await state()).project;
+    await openProjectViaInput(fullFile);
+    await page.waitForSelector('.modal >> text=開啟專案檔？');
+    await page.click('.modal [data-cancel]');
+    assert.deepEqual((await state()).project, before);
+  });
+
+  await test('開啟壞掉的檔案：顯示錯誤，目前的專案不受影響', async () => {
+    const before = (await state()).project;
+    const bad = {
+      'truncated.onlinecut': (await readFile(fullFile)).subarray(0, 5000),
+      'random.onlinecut': Buffer.from('this is definitely not a project file'),
+      'future.onlinecut': Buffer.from(JSON.stringify({ format: 'onlinecut-project', version: 99, project: before })),
+      'empty.onlinecut': Buffer.alloc(0),
+    };
+    for (const [name, buf] of Object.entries(bad)) {
+      const f = path.join(tmp, name);
+      await import('node:fs').then(fs => fs.writeFileSync(f, buf));
+      await openProjectViaInput(f);
+      await waitFor(async () => (await page.locator('.toast.error').count()) > 0, 5000, `${name} 的錯誤通知`);
+      const msg = await page.locator('.toast.error').last().textContent();
+      assert.match(msg, /[一-鿿]/, `${name}：${msg}`);
+      assert.equal(await page.locator('.modal').count(), 0, `${name} 不應該跳出確認`);
+      assert.deepEqual((await state()).project, before, `${name} 不能改到目前的專案`);
+      await page.evaluate(() => document.querySelectorAll('.toast').forEach(t => t.remove()));
+    }
+    const errs = await page.evaluate(() => JSON.parse(sessionStorage.getItem('__errorToasts') || '[]'));
+    assert.ok(errs.some(t => /較新版本/.test(t)), '未來版本要提示更新');
+  });
+
+  await test('開啟完整專案檔：專案、素材、縮圖都回來，可以播放和匯出', async () => {
+    await newProjectUI();
+    await openProjectViaInput(fullFile);
+    await waitFor(async () => (await state()).project.clips.length === original.clips.length, 15000, '開啟');
+    const s = await state();
+    assertSameProject(s.project, original);
+    assert.equal(s.canUndo, false, '開啟後沒有 undo 紀錄');
+    const loaded = await page.evaluate(() => Object.keys(window.__oc.store.project.media).every(id => window.__oc.runtime.has(id)));
+    assert.equal(loaded, true);
+    assert.equal(await page.locator('.media-card.missing').count(), 0);
+    await waitFor(() => page.evaluate(() => [...window.__oc.runtime.items.values()].some(i => i.thumbs.length)), 10000, '縮圖');
+    const r = await page.evaluate(async () => {
+      const { exportVideo } = await import('./assets/js/engine/exporter.js');
+      const res = await exportVideo({ project: window.__oc.store.project, runtime: window.__oc.runtime, settings: { short: 360 } });
+      return res.blob.size;
+    });
+    assert.ok(r > 1000);
+  });
+
+  await test('開啟後重新整理還在（素材也存進了瀏覽器）', async () => {
+    await page.waitForTimeout(800);
+    await page.reload();
+    await page.waitForFunction(() => window.__oc && window.__oc.store.project.clips.length > 0);
+    assertSameProject((await state()).project, original);
+    const loaded = await page.evaluate(() => Object.keys(window.__oc.store.project.media).every(id => window.__oc.runtime.has(id)));
+    assert.equal(loaded, true);
+  });
+
+  await test('不含素材的專案檔：素材標示遺失、不能匯出；匯入原檔後自動接回', async () => {
+    await openProjectViaInput(liteFile);
+    await page.waitForSelector('.modal >> text=開啟專案檔？');
+    await page.click('.modal .danger-btn');
+    await waitFor(async () => (await page.locator('.media-card.missing').count()) === 3, 10000, '3 個遺失');
+    const errs = await page.evaluate(() => JSON.parse(sessionStorage.getItem('__errorToasts') || '[]'));
+    assert.match(errs[errs.length - 1], /3 個素材需要重新匯入（這個專案檔沒有包含素材）/);
+    // 匯出要被擋下來
+    await page.click('#btnExport');
+    assert.equal(await page.locator('.modal').count(), 0, '不應該開啟匯出對話框');
+    // 匯入同一個檔案 → 接回，不新增素材
+    await page.setInputFiles('#fileInput', [fx.video, fx.image]);
+    await waitFor(async () => (await page.locator('.media-card.missing').count()) === 1, 10000, '接回 2 個');
+    const s = await state();
+    assert.equal(Object.keys(s.project.media).length, 3, '不會多出新的素材');
+    assert.deepEqual(s.project.clips, original.clips, '片段不變');
+    await page.setInputFiles('#fileInput', [fx.audio]);
+    await waitFor(async () => (await page.locator('.media-card.missing').count()) === 0, 10000, '全部接回');
+    // 重新整理後還是接好的
+    await page.waitForTimeout(500);
+    await page.reload();
+    await page.waitForFunction(() => window.__oc && window.__oc.store.project.clips.length > 0);
+    assert.equal(await page.evaluate(() => Object.keys(window.__oc.store.project.media).every(id => window.__oc.runtime.has(id))), true);
+  });
+
+  await test('同名但大小不同的檔案不會被誤接', async () => {
+    await openProjectViaInput(liteFile);
+    await page.click('.modal .danger-btn');
+    await waitFor(async () => (await page.locator('.media-card.missing').count()) === 3, 10000, '遺失');
+    const imposter = path.join(tmp, 'imposter', path.basename(fx.image));
+    await import('node:fs').then(fs => { fs.mkdirSync(path.dirname(imposter), { recursive: true }); });
+    ffmpeg(['-f', 'lavfi', '-i', 'color=c=blue:size=200x200:duration=1', '-frames:v', '1', imposter]);
+    await page.setInputFiles('#fileInput', [imposter]);
+    await waitFor(async () => Object.keys((await state()).project.media).length === 4, 10000, '當成新素材');
+    assert.equal(await page.locator('.media-card.missing').count(), 3);
+  });
+
+  await test('把專案檔拖進視窗也能開啟；同時拖了其他檔案會提示', async () => {
+    const before = (await state()).project;
+    const bytes = [...await readFile(fullFile)];
+    await page.evaluate(async (bytes) => {
+      const dt = new DataTransfer();
+      dt.items.add(new File([new Uint8Array(bytes)], 'dragged.onlinecut'));
+      dt.items.add(new File(['x'], 'other.txt', { type: 'text/plain' }));
+      window.dispatchEvent(new DragEvent('drop', { dataTransfer: dt, bubbles: true, cancelable: true }));
+    }, bytes);
+    await page.waitForSelector('.modal >> text=開啟專案檔？');
+    assert.ok(await page.locator('.toast >> text=一次只能開啟一個專案檔').count());
+    await page.click('.modal .danger-btn');
+    // 等素材真的換成專案檔裡的（拖之前有 4 個素材、3 個遺失）
+    await waitFor(() => page.evaluate(() => {
+      const ids = Object.keys(window.__oc.store.project.media);
+      return ids.length === 3 && ids.every(id => window.__oc.runtime.has(id));
+    }), 15000, '開啟');
+    assert.equal(Object.keys(before.media).length, 4);
+    assertSameProject((await state()).project, original);
+  });
+
+  await test('專案選單可以用鍵盤操作', async () => {
+    await page.click('#btnProjectMenu');
+    assert.equal(await page.isVisible('#projectMenu'), true);
+    assert.equal(await page.evaluate(() => document.activeElement.id), 'btnNew');
+    await page.keyboard.press('ArrowDown');
+    assert.equal(await page.evaluate(() => document.activeElement.id), 'btnOpenProject');
+    await page.keyboard.press('ArrowUp');
+    await page.keyboard.press('ArrowUp');
+    assert.equal(await page.evaluate(() => document.activeElement.id), 'btnSaveProject', '循環到最後一項');
+    const clipsBefore = (await state()).project.clips.length;
+    await page.keyboard.press('s'); // 選單開著時，不應該觸發「分割」
+    assert.equal((await state()).project.clips.length, clipsBefore);
+    await page.keyboard.press('Escape');
+    assert.equal(await page.isVisible('#projectMenu'), false);
+    assert.equal(await page.evaluate(() => document.activeElement.id), 'btnProjectMenu');
+    await page.click('#btnProjectMenu');
+    await page.mouse.click(700, 400); // 點外面關閉
+    assert.equal(await page.isVisible('#projectMenu'), false);
+  });
+
+  console.log('\n其他邊界情況');
+  const errorToasts = () => page.evaluate(() => JSON.parse(sessionStorage.getItem('__errorToasts') || '[]'));
+
+  await test('同時開兩個編輯器分頁：兩邊都會警告；匯出中關閉分頁會先確認', async () => {
+    const before = (await errorToasts()).length;
+    const p2 = await context.newPage();
+    p2.on('pageerror', e => errors.push(e.message));
+    await p2.goto(`${BASE}/editor.html`);
+    await p2.waitForFunction(() => window.__oc);
+    await waitFor(async () => (await p2.locator('.toast.error >> text=另一個分頁').count()) > 0, 5000, '新分頁的警告');
+    await waitFor(async () => (await errorToasts()).slice(before).some(t => /另一個分頁/.test(t)), 5000, '舊分頁的警告');
+    // 在第二個分頁匯出，匯出中試著關閉
+    await p2.evaluate(() => { window.__oc.store.select([]); });
+    await p2.click('#btnExport');
+    await p2.click('.modal [data-go]');
+    await p2.waitForSelector('.modal >> text=/渲染畫面|混合聲音|封裝/');
+    const dialog = new Promise(r => p2.once('dialog', r));
+    await p2.close({ runBeforeUnload: true });
+    const d = await Promise.race([dialog, new Promise(r => setTimeout(() => r(null), 5000))]);
+    assert.ok(d, '應該要出現離開確認');
+    assert.equal(d.type(), 'beforeunload');
+    await d.accept();
+  });
+
+  await test('在文字框裡打字不會觸發快捷鍵', async () => {
+    const t = (await state()).project.clips.find(c => c.type === 'text');
+    await page.evaluate((id) => window.__oc.store.select([id]), t.id);
+    const before = (await state()).project.clips.length;
+    await page.click('.inspector textarea');
+    await page.keyboard.type('s s del');
+    await page.keyboard.press('Delete');
+    await page.keyboard.press('Space');
+    const s = await state();
+    assert.equal(s.project.clips.length, before, '沒有分割或刪除');
+    assert.equal(s.playing, false, '沒有開始播放');
+    assert.match(s.project.clips.find(c => c.id === t.id).text.content, /s s del/);
+    await page.keyboard.press('Escape');
+    await page.locator('#tlScroll').click({ position: { x: 5, y: 5 } });
+  });
+
+  await test('0 位元組的檔案：看得懂的錯誤', async () => {
+    const f = path.join(tmp, 'zero.mp4');
+    await import('node:fs').then(fs => fs.writeFileSync(f, Buffer.alloc(0)));
+    const before = (await errorToasts()).length;
+    await page.setInputFiles('#fileInput', f);
+    await waitFor(async () => (await errorToasts()).length > before, 5000, '錯誤通知');
+    assert.match((await errorToasts()).at(-1), /zero\.mp4：檔案損毀，或瀏覽器不支援這種格式/);
+  });
+
+  await test('同一個檔案匯入兩次：變成兩個素材，都能用', async () => {
+    const n = Object.keys((await state()).project.media).length;
+    await page.setInputFiles('#fileInput', [fx.image]);
+    await page.setInputFiles('#fileInput', [fx.image]);
+    await waitFor(async () => Object.keys((await state()).project.media).length === n + 2, 10000, '兩個新素材');
+    assert.equal(await page.evaluate(() => Object.keys(window.__oc.store.project.media).every(id => window.__oc.runtime.has(id))), true);
+  });
+
+  await test('沒有 MIME 類型、副檔名大寫的檔案也能匯入（拖放）', async () => {
+    const n = Object.keys((await state()).project.media).length;
+    const bytes = [...await readFile(fx.audio)];
+    await page.evaluate((bytes) => {
+      const dt = new DataTransfer();
+      dt.items.add(new File([new Uint8Array(bytes)], 'VOICE.MP3', { type: '' }));
+      window.dispatchEvent(new DragEvent('drop', { dataTransfer: dt, bubbles: true, cancelable: true }));
+    }, bytes);
+    await waitFor(async () => Object.keys((await state()).project.media).length === n + 1, 10000, '匯入');
+    const m = Object.values((await state()).project.media).find(m => m.name === 'VOICE.MP3');
+    assert.equal(m.type, 'audio');
+  });
+
+  await test('瀏覽器空間不足（存檔失敗）：提示使用者，素材照樣能用', async () => {
+    await page.evaluate(async () => {
+      const { store } = await import('./assets/js/media/store.js');
+      window.__realSaveFile = store.saveFile;
+      store.saveFile = () => Promise.reject(new DOMException('quota', 'QuotaExceededError'));
+    });
+    try {
+      const before = (await errorToasts()).length;
+      const n = Object.keys((await state()).project.media).length;
+      await page.setInputFiles('#fileInput', [fx.portrait]);
+      await waitFor(async () => Object.keys((await state()).project.media).length === n + 1, 10000, '匯入');
+      assert.ok((await errorToasts()).slice(before).some(t => /vertical\.mp4」太大，無法存到瀏覽器/.test(t)));
+      const id = Object.values((await state()).project.media).find(m => m.name === 'vertical.mp4').id;
+      assert.equal(await page.evaluate((id) => window.__oc.runtime.has(id), id), true);
+    } finally {
+      await page.evaluate(async () => {
+        const { store } = await import('./assets/js/media/store.js');
+        store.saveFile = window.__realSaveFile;
+      });
+    }
+  });
+
+  await test('移除素材後按復原：片段回來，素材也還能用', async () => {
+    const s0 = await state();
+    const used = Object.values(s0.project.media).find(m => s0.project.clips.some(c => c.mediaId === m.id) && m.type === 'video');
+    const card = page.locator(`.media-card[data-media-id="${used.id}"]`);
+    await card.hover();
+    await card.locator('[data-act="remove"]').click();
+    await page.click('.modal .danger-btn');
+    assert.ok(!(await state()).project.media[used.id]);
+    await page.keyboard.press('Control+z');
+    const s1 = await state();
+    assertSameProject(s1.project, s0.project);
+    assert.equal(await page.locator(`.media-card[data-media-id="${used.id}"].missing`).count(), 0);
+  });
+
+  await test('鎖定的軌道：不能拖曳、不能刪除', async () => {
+    const s0 = await state();
+    const clip = s0.project.clips.find(c => c.type === 'video');
+    await page.evaluate(async (trackId) => {
+      const P = await import('./assets/js/core/project.js');
+      const st = window.__oc.store;
+      st.commit(P.updateTrack(st.project, trackId, { locked: true }));
+    }, clip.trackId);
+    const box = await clipBox(clip.id);
+    await page.mouse.move(box.x + 10, box.y + box.height / 2);
+    await page.mouse.down();
+    await page.mouse.move(box.x + 200, box.y + box.height / 2, { steps: 5 });
+    await page.mouse.up();
+    assert.equal((await state()).project.clips.find(c => c.id === clip.id).start, clip.start, '沒有移動');
+    await page.evaluate((id) => window.__oc.store.select([id]), clip.id);
+    await page.keyboard.press('Delete');
+    assert.ok((await state()).project.clips.find(c => c.id === clip.id), '沒有被刪除');
+    await page.keyboard.press('Control+z'); // 解鎖
+  });
+
+  await test('變速、淡入淡出、表情符號與很長的文字都能正確匯出', async () => {
+    const res = await page.evaluate(async () => {
+      const P = await import('./assets/js/core/project.js');
+      const { exportVideo } = await import('./assets/js/engine/exporter.js');
+      const src = window.__oc.store.project;
+      const vid = Object.values(src.media).find(m => m.name === 'clip.mp4');
+      let p = P.createProject();
+      p = P.addMedia(p, vid);
+      let r = P.addClip(p, 'video', { mediaId: vid.id, fadeIn: 0.5, fadeOut: 0.5 });
+      p = P.updateClip(r.project, r.clip.id, { speed: 2 });
+      p = P.addClip(p, 'text', { trackId: p.tracks[0].id, start: 0, duration: 2, text: { content: '🎬🔥 慶祝 '.repeat(40) + '\n第二行 ✨', fontSize: 600 } }).project;
+      const out = await exportVideo({ project: p, runtime: window.__oc.runtime, settings: { short: 360 } });
+      return { expected: P.getDuration(p), bytes: Array.from(new Uint8Array(await out.blob.arrayBuffer())) };
+    });
+    const out = path.join(tmp, 'edge.mp4');
+    await import('node:fs').then(fs => fs.writeFileSync(out, Buffer.from(res.bytes)));
+    const info = probe(out);
+    assert.ok(Math.abs(res.expected - 2) < 1e-6, '4 秒的影片 2 倍速 = 2 秒');
+    assert.ok(Math.abs(parseFloat(info.format.duration) - 2) < 0.15, `長度 ${info.format.duration}`);
+    assert.ok(info.streams.some(s => s.codec_type === 'audio'));
   });
 
   console.log('\n首頁與手機版');

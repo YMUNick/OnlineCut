@@ -284,10 +284,15 @@ export function addClip(project, type, fields = {}) {
     clip = makeClip(type, { ...fields, trackId: track.id });
     if (type === 'video' || type === 'audio') {
       const m = p.media[clip.mediaId];
+      // 入點不能超過素材結尾（至少留一格）
+      if (m && isFinite(m.duration)) clip.srcIn = clamp(clip.srcIn, 0, Math.max(0, m.duration - 1 / p.fps));
       const maxSpan = (m?.duration ?? clip.duration * clip.speed) - clip.srcIn;
       if (fields.duration == null) clip.duration = maxSpan / clip.speed;
       clip.duration = Math.max(1 / p.fps, Math.min(clip.duration, maxSpan / clip.speed));
     }
+    // 任何片段都至少一格；長度不是數字時用預設值
+    if (!isFinite(clip.duration)) clip.duration = type === 'text' ? DEFAULT_TEXT_DURATION : DEFAULT_IMAGE_DURATION;
+    clip.duration = Math.max(1 / p.fps, clip.duration);
     const desired = fields.start ?? clipsOnTrack(p, track.id).reduce((m, c) => Math.max(m, clipEnd(c)), 0);
     clip.start = findFreeStart(p, track.id, desired, clip.duration);
     p.clips.push(clip);
@@ -343,7 +348,8 @@ export function trimClip(project, id, edge, time) {
 export function splitClip(project, id, t) {
   const clip = getClip(project, id);
   const minDur = 1 / project.fps;
-  if (!clip || t <= clip.start + minDur / 2 || t >= clipEnd(clip) - minDur / 2) return { project, rightId: null };
+  // 兩邊都至少要有一格
+  if (!clip || t < clip.start + minDur - 1e-9 || t > clipEnd(clip) - minDur + 1e-9) return { project, rightId: null };
   const rightId = uid('clp');
   const next = produce(project, p => {
     const left = getClip(p, id);
@@ -434,10 +440,13 @@ export function updateClip(project, id, patch) {
     if (speed != null && (c.type === 'video' || c.type === 'audio')) {
       // 變速：保留同一段素材，片段長度跟著變；若後面撞到其他片段則截短
       const s = clamp(Number(speed) || 1, MIN_SPEED, MAX_SPEED);
-      const span = sourceSpan(c);
-      c.speed = s;
       const nextStart = clipsOnTrack(p, c.trackId, [c.id]).filter(n => n.start >= c.start).reduce((m, n) => Math.min(m, n.start), Infinity);
-      c.duration = Math.min(span / s, nextStart - c.start);
+      const duration = Math.min(sourceSpan(c) / s, nextStart - c.start);
+      // 變速後短到不到一格就不套用（例如只有一格的片段再加速）
+      if (duration >= 1 / p.fps - 1e-9) {
+        c.speed = s;
+        c.duration = duration;
+      }
     }
     c.fadeIn = clamp(Number(c.fadeIn) || 0, 0, c.duration);
     c.fadeOut = clamp(Number(c.fadeOut) || 0, 0, c.duration);
@@ -488,25 +497,149 @@ export function renameProject(project, name) {
 // ============================================================
 // 讀取存檔
 // ============================================================
+// 存檔或專案檔可能來自舊版本、被手動修改，甚至是惡意檔案，所以每個欄位都要檢查：
+// 不認識的欄位丟掉、數值夾在合理範圍、解析度依畫面比例重算、重疊的片段往後挪。
+// 正常的專案經過這裡必須完全不變。
+
+const ALLOWED_FPS = [24, 25, 30, 50, 60];
+const num = (v, d) => (typeof v === 'number' && isFinite(v) ? v : d);
+const str = (v, d, max) => (typeof v === 'string' ? v.slice(0, max) : d);
+const MEDIA_TYPES = ['video', 'audio', 'image'];
+
+// __proto__ 之類的名稱當成物件的鍵會改到原型，一律拒絕
+const SAFE_ID = /^[A-Za-z0-9_-]{1,100}$/;
+const RESERVED = new Set(['__proto__', 'constructor', 'prototype']);
+const isSafeId = (id) => typeof id === 'string' && SAFE_ID.test(id) && !RESERVED.has(id);
+
+function sanitizeMedia(id, m) {
+  if (!isSafeId(id) || !m || typeof m !== 'object' || m.id !== id || !MEDIA_TYPES.includes(m.type)) return null;
+  const out = { id, type: m.type, name: str(m.name, '素材', 255) };
+  if (m.size !== undefined) out.size = Math.max(0, num(m.size, 0));
+  if (m.mime !== undefined) out.mime = str(m.mime, '', 100);
+  if (m.addedAt !== undefined) out.addedAt = num(m.addedAt, 0);
+  if (m.duration !== undefined) out.duration = m.duration === null ? null : Math.max(0, num(m.duration, 0)) || null;
+  if (m.width !== undefined) out.width = clamp(num(m.width, 1), 1, 16384);
+  if (m.height !== undefined) out.height = clamp(num(m.height, 1), 1, 16384);
+  return out;
+}
+
+const CLIP_FIELDS = ['name', 'mediaId', 'trackId', 'start', 'duration', 'srcIn', 'speed', 'volume', 'muted', 'fadeIn', 'fadeOut', 'opacity'];
+const TEXT_FIELDS = { content: 5000, fontFamily: 60, color: 40, background: 40, strokeColor: 40 };
+
+function sanitizeClip(c) {
+  const fields = {};
+  for (const k of CLIP_FIELDS) if (c[k] !== undefined) fields[k] = c[k];
+  const m = makeClip(c.type, fields);
+  m.id = c.id;
+  m.name = str(m.name, '', 255);
+  m.mediaId = c.type === 'text' ? null : str(m.mediaId, null, 100);
+  m.trackId = str(m.trackId, null, 100);
+  m.start = Math.max(0, num(m.start, 0));
+  m.duration = num(m.duration, 0);
+  m.srcIn = Math.max(0, num(m.srcIn, 0));
+  m.speed = c.type === 'video' || c.type === 'audio' ? clamp(num(m.speed, 1), MIN_SPEED, MAX_SPEED) : 1;
+  m.volume = clamp(num(m.volume, 1), 0, 2);
+  m.opacity = clamp(num(m.opacity, 1), 0, 1);
+  m.muted = m.muted === true;
+  const t = c.transform && typeof c.transform === 'object' ? c.transform : {};
+  m.transform = {
+    x: clamp(num(t.x, 0), -1e5, 1e5),
+    y: clamp(num(t.y, 0), -1e5, 1e5),
+    scale: clamp(num(t.scale, 1), 0.01, 10),
+    rotation: clamp(num(t.rotation, 0), -360, 360),
+  };
+  const f = c.filters && typeof c.filters === 'object' ? c.filters : {};
+  m.filters = {
+    brightness: clamp(num(f.brightness, 100), 0, 200),
+    contrast: clamp(num(f.contrast, 100), 0, 200),
+    saturation: clamp(num(f.saturation, 100), 0, 200),
+    blur: clamp(num(f.blur, 0), 0, 50),
+    grayscale: clamp(num(f.grayscale, 0), 0, 100),
+  };
+  if (c.type === 'text') {
+    const src = c.text && typeof c.text === 'object' ? c.text : {};
+    const d = defaultText();
+    m.text = { ...d };
+    for (const [k, max] of Object.entries(TEXT_FIELDS)) m.text[k] = str(src[k], d[k], max);
+    m.text.fontSize = clamp(num(src.fontSize, d.fontSize), 8, 600);
+    m.text.fontWeight = [100, 200, 300, 400, 500, 600, 700, 800, 900].includes(src.fontWeight) ? src.fontWeight : d.fontWeight;
+    m.text.strokeWidth = clamp(num(src.strokeWidth, d.strokeWidth), 0, 100);
+    m.text.align = ['left', 'center', 'right'].includes(src.align) ? src.align : d.align;
+    m.text.italic = src.italic === true;
+    m.text.shadow = src.shadow === undefined ? d.shadow : src.shadow === true;
+  }
+  return m;
+}
 
 /** 檢查並修復讀進來的專案；格式不對回傳 null */
 export function normalizeProject(raw) {
   if (!raw || typeof raw !== 'object' || !Array.isArray(raw.tracks) || !Array.isArray(raw.clips)) return null;
-  const base = createProject({ aspect: ASPECT_PRESETS[raw.aspect] ? raw.aspect : '16:9' });
-  const p = { ...base, ...raw, media: { ...(raw.media || {}) } };
-  p.tracks = raw.tracks.filter(t => t && t.id && (t.kind === 'video' || t.kind === 'audio'))
-    .map(t => ({ muted: false, hidden: false, locked: false, name: t.kind === 'video' ? 'V' : 'A', ...t }));
+  const aspect = ASPECT_PRESETS[raw.aspect] ? raw.aspect : '16:9';
+  const base = createProject({ aspect });
+  const p = {
+    version: PROJECT_VERSION,
+    id: str(raw.id, base.id, 100) || base.id,
+    name: str(raw.name, base.name, 120) || base.name,
+    aspect,
+    width: base.width,      // 解析度一律依畫面比例，不信任檔案裡的數字
+    height: base.height,
+    fps: ALLOWED_FPS.includes(raw.fps) ? raw.fps : DEFAULT_FPS,
+    background: /^#[0-9a-f]{6}$/i.test(raw.background) ? raw.background : '#000000',
+    tracks: [],
+    clips: [],
+    media: {},
+  };
+
+  if (raw.media && typeof raw.media === 'object') {
+    for (const [id, m] of Object.entries(raw.media)) {
+      const clean = sanitizeMedia(id, m);
+      if (clean) p.media[id] = clean;
+    }
+  }
+
+  const trackIds = new Set();
+  for (const t of raw.tracks) {
+    if (!t || typeof t !== 'object' || (t.kind !== 'video' && t.kind !== 'audio')) continue;
+    const id = t.id;
+    if (!isSafeId(id) || trackIds.has(id)) continue;
+    trackIds.add(id);
+    p.tracks.push({
+      id, kind: t.kind, name: str(t.name, t.kind === 'video' ? 'V' : 'A', 20) || (t.kind === 'video' ? 'V' : 'A'),
+      muted: t.muted === true, hidden: t.hidden === true, locked: t.locked === true,
+    });
+  }
   if (!p.tracks.some(t => t.kind === 'video')) p.tracks.unshift(makeTrack('video', 'V1'));
   if (!p.tracks.some(t => t.kind === 'audio')) p.tracks.push(makeTrack('audio', 'A1'));
-  p.clips = raw.clips
-    .filter(c => c && c.id && TRACK_KIND_FOR_TYPE[c.type])
-    .map(c => {
-      const m = makeClip(c.type, c);
-      m.id = c.id;
-      return m;
-    })
-    .filter(c => canHost(getTrack(p, c.trackId), c.type))
-    .filter(c => c.type === 'text' || !!p.media[c.mediaId])
-    .filter(c => isFinite(c.start) && isFinite(c.duration) && c.duration > 0 && c.start >= 0);
+
+  const minDur = 1 / p.fps;
+  const clipIds = new Set();
+  for (const c of raw.clips) {
+    if (!c || typeof c !== 'object' || !isSafeId(c.id) || !TRACK_KIND_FOR_TYPE[c.type] || clipIds.has(c.id)) continue;
+    const m = sanitizeClip(c);
+    if (!canHost(getTrack(p, m.trackId), m.type)) continue;
+    if (m.type !== 'text' && !p.media[m.mediaId]) continue;
+    if (p.media[m.mediaId] && p.media[m.mediaId].type !== m.type) continue; // 片段型別要跟素材一致
+    // 不能超過素材本身的長度
+    const limit = mediaLimit(p, m);
+    // 只在超出容許誤差時才修正，避免浮點誤差讓正常的專案每次讀取都被改動
+    if (isFinite(limit)) {
+      if (m.srcIn > limit - minDur + 1e-6) m.srcIn = Math.max(0, limit - minDur);
+      if (m.srcIn + m.duration * m.speed > limit + 1e-6) m.duration = (limit - m.srcIn) / m.speed;
+    }
+    if (!(m.duration > 0)) continue;
+    m.fadeIn = clamp(num(m.fadeIn, 0), 0, m.duration);
+    m.fadeOut = clamp(num(m.fadeOut, 0), 0, m.duration);
+    clipIds.add(m.id);
+    p.clips.push(m);
+  }
+
+  // 同一軌上重疊的片段往後挪
+  for (const t of p.tracks) {
+    let end = 0;
+    for (const c of p.clips.filter(c => c.trackId === t.id).sort((a, b) => a.start - b.start)) {
+      if (c.start < end - 1e-6) c.start = end;
+      end = clipEnd(c);
+    }
+  }
   return p;
 }

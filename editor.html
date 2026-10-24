@@ -31,7 +31,15 @@
         <button class="icon-btn" id="btnRedo" title="重做 (Ctrl+Shift+Z)" aria-label="重做" data-icon="redo"></button>
       </div>
       <div class="topbar-right">
-        <button class="ghost-btn" id="btnNew" title="新專案"><span data-icon="newFile"></span><span class="label">新專案</span></button>
+        <div class="menu-wrap">
+          <button class="ghost-btn" id="btnProjectMenu" aria-haspopup="menu" aria-expanded="false" aria-controls="projectMenu" title="專案"><span data-icon="folder"></span><span class="label">專案</span><span data-icon="chevronDown" class="icon-sm caret"></span></button>
+          <div class="menu" id="projectMenu" role="menu" aria-label="專案" hidden>
+            <button role="menuitem" id="btnNew"><span data-icon="newFile"></span><span>新專案</span></button>
+            <button role="menuitem" id="btnOpenProject"><span data-icon="folderOpen"></span><span>開啟專案檔…</span><kbd>Ctrl O</kbd></button>
+            <button role="menuitem" id="btnSaveProject"><span data-icon="save"></span><span>下載專案檔…</span><kbd>Ctrl S</kbd></button>
+            <div class="menu-note">專案檔（.onlinecut）可以備份，或帶到另一台電腦繼續剪。</div>
+          </div>
+        </div>
         <button class="ghost-btn" id="btnShortcuts" title="快捷鍵 (?)"><span data-icon="keyboard"></span><span class="label">快捷鍵</span></button>
         <button class="primary-btn" id="btnExport" title="匯出影片 (Ctrl+E)"><span data-icon="download"></span><span>匯出</span></button>
       </div>
@@ -49,7 +57,8 @@
           <div class="dz-title">匯入影片、音樂或圖片</div>
           <div class="dz-hint">點這裡選檔，或直接拖進視窗</div>
         </div>
-        <input type="file" id="fileInput" multiple accept="video/*,audio/*,image/*" hidden>
+        <input type="file" id="fileInput" multiple accept="video/*,audio/*,image/*,.onlinecut" hidden>
+        <input type="file" id="projectInput" accept=".onlinecut,.json,application/zip" hidden>
         <div class="media-grid" id="mediaGrid"></div>
         <div class="media-empty" id="mediaEmpty">
           <p>還沒有素材。</p>

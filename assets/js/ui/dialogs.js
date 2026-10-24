@@ -2,6 +2,13 @@
 
 import { icon } from './icons.js';
 
+/** 匯出、打包專案檔等長時間工作進行中時，關閉分頁要先提醒 */
+export const busy = {
+  count: 0,
+  start() { this.count++; },
+  end() { this.count = Math.max(0, this.count - 1); },
+};
+
 export function escapeHtml(s) {
   return String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 }

@@ -14,9 +14,11 @@ import { MediaPanel } from './ui/media-panel.js';
 import { Inspector } from './ui/inspector.js';
 import { Preview } from './ui/preview.js';
 import { openExportDialog } from './ui/export-dialog.js';
-import { toast, confirmDialog, openModal, isModalOpen } from './ui/dialogs.js';
+import { toast, confirmDialog, openModal, isModalOpen, busy } from './ui/dialogs.js';
 import { icon } from './ui/icons.js';
 import { makeSampleFiles } from './samples.js';
+import { unpackProject, isProjectFileName, findRelinkTarget } from './core/project-file.js';
+import { openSaveProjectDialog } from './ui/project-dialog.js';
 
 const $ = (id) => document.getElementById(id);
 const LS_TL_HEIGHT = 'onlinecut.timelineHeight';
@@ -181,11 +183,33 @@ async function loadSaved() {
 // ============================================================
 let importSeq = 0;
 async function importFiles(files) {
-  const list = [...files];
+  let list = [...files];
+  if (!list.length) return;
+  // 專案檔另外處理（一次只開一個）
+  const projectFiles = list.filter(f => isProjectFileName(f.name));
+  if (projectFiles.length) {
+    if (projectFiles.length > 1 || list.length > projectFiles.length) toast('一次只能開啟一個專案檔，其他檔案沒有匯入', { timeout: 6000 });
+    await openProjectFile(projectFiles[0]);
+    return;
+  }
+  db.persist();
+  // 檔名與大小都跟「遺失的素材」一樣：直接接回去，不新增素材
+  const relinked = [];
+  list = list.filter((file) => {
+    const target = findRelinkTarget(store.project, file, (id) => !runtime.has(id) && !relinked.includes(id));
+    if (!target) return true;
+    relinked.push(target.id);
+    runtime.register(target, file);
+    db.saveFile(target.id, file).catch(() => toast(`「${file.name}」太大，無法存到瀏覽器；重新整理後需要再匯入一次`, { type: 'error', timeout: 7000 }));
+    return false;
+  });
+  if (relinked.length) {
+    store.emit('change', { type: 'media' });
+    toast(`已接回 ${relinked.length} 個遺失的素材`, { type: 'success' });
+  }
   if (!list.length) return;
   const wasEmpty = store.project.clips.length === 0;
   const imported = [];
-  db.persist();
   await Promise.all(list.map(async (file) => {
     const key = `imp${++importSeq}`;
     mediaPanel.addLoading(key, file.name);
@@ -295,18 +319,79 @@ function duplicateSelected() {
   store.commit(r.project, { select: [r.clip.id] });
 }
 
-async function newProject() {
-  const ok = !store.project.clips.length || await confirmDialog({
-    title: '開新專案？', message: '目前的專案和匯入的素材會從這台裝置上刪除，這個動作無法復原。請先確認需要的影片已經匯出。', confirmText: '開新專案', danger: true,
-  });
-  if (!ok) return;
+function hasWork() {
+  return store.project.clips.length > 0 || Object.keys(store.project.media).length > 0;
+}
+
+/** 清掉目前的專案（素材檔也從瀏覽器刪除） */
+async function resetWorkspace() {
   player.destroy();
   runtime.releaseAll();
   try { await db.clearAll(); } catch { /* 忽略 */ }
+}
+
+async function newProject() {
+  const ok = !hasWork() || await confirmDialog({
+    title: '開新專案？', message: '目前的專案和匯入的素材會從這台裝置上刪除，這個動作無法復原。請先確認需要的影片已經匯出。', confirmText: '開新專案', danger: true,
+  });
+  if (!ok) return;
+  await resetWorkspace();
   store.replace(createProject());
   player.seek(0);
   timeline.setZoom(60, 0);
   toast('已建立新專案');
+}
+
+// ============================================================
+// 專案檔
+// ============================================================
+let opening = false;
+async function openProjectFile(file) {
+  if (opening) return;
+  opening = true;
+  player.pause();
+  const dismiss = toast(`正在讀取「${file.name}」…`, { timeout: 0 });
+  try {
+    let data;
+    try {
+      data = await unpackProject(file);
+    } catch (e) {
+      toast(e.message || '無法開啟專案檔', { type: 'error', timeout: 8000 });
+      return; // 目前的專案不受影響
+    } finally {
+      dismiss();
+    }
+    if (hasWork() && !(await confirmDialog({
+      title: '開啟專案檔？',
+      message: `「${data.project.name}」會取代目前的專案，目前的專案和素材會從這台裝置上刪除。需要保留的話，請先從「專案 → 下載專案檔」備份。`,
+      confirmText: '開啟', danger: true,
+    }))) return;
+
+    await resetWorkspace();
+    let notStored = 0;
+    for (const [id, f] of data.files) {
+      try { await db.saveFile(id, f); } catch { notStored++; }
+      await runtime.register(data.project.media[id], f);
+    }
+    store.replace(data.project);
+    await saveNow();
+    player.seek(0);
+    requestAnimationFrame(() => timeline.fit());
+    toast(`已開啟「${data.project.name}」`, { type: 'success' });
+    const lost = data.missing.length + data.corrupted.length;
+    if (lost) {
+      const why = data.corrupted.length ? `（其中 ${data.corrupted.length} 個在專案檔裡已損毀）` : data.includesMedia ? '' : '（這個專案檔沒有包含素材）';
+      toast(`有 ${lost} 個素材需要重新匯入${why}，匯入同名、同大小的原始檔就會自動接回`, { type: 'error', timeout: 10000 });
+    }
+    if (notStored) toast(`有 ${notStored} 個素材太大，無法存到瀏覽器；重新整理後需要再匯入一次`, { type: 'error', timeout: 8000 });
+  } finally {
+    opening = false;
+  }
+}
+
+function saveProjectFile() {
+  player.pause();
+  openSaveProjectDialog({ project: store.project, runtime });
 }
 
 async function loadSample() {
@@ -365,7 +450,39 @@ $('btnSplit').onclick = splitSelected;
 $('btnDelete').onclick = (e) => deleteSelected(e.shiftKey || store.ripple);
 $('btnDuplicate').onclick = duplicateSelected;
 $('btnExport').onclick = () => openExportDialog({ project: store.project, runtime, player });
-$('btnNew').onclick = newProject;
+$('btnNew').onclick = () => { closeMenu(); newProject(); };
+$('btnOpenProject').onclick = () => { closeMenu(); $('projectInput').click(); };
+$('btnSaveProject').onclick = () => { closeMenu(); saveProjectFile(); };
+$('projectInput').addEventListener('change', () => {
+  const f = $('projectInput').files[0];
+  $('projectInput').value = '';
+  if (f) openProjectFile(f);
+});
+
+// 專案選單（點外面、Esc 關閉；上下鍵移動）
+const menuBtn = $('btnProjectMenu'), menu = $('projectMenu');
+const menuItems = () => [...menu.querySelectorAll('[role="menuitem"]')];
+function openMenu() {
+  menu.hidden = false;
+  menuBtn.setAttribute('aria-expanded', 'true');
+  menuItems()[0].focus();
+}
+function closeMenu(focusButton = false) {
+  if (menu.hidden) return;
+  menu.hidden = true;
+  menuBtn.setAttribute('aria-expanded', 'false');
+  if (focusButton) menuBtn.focus();
+}
+menuBtn.onclick = () => (menu.hidden ? openMenu() : closeMenu());
+document.addEventListener('pointerdown', (e) => { if (!e.target.closest('.menu-wrap')) closeMenu(); });
+menu.addEventListener('keydown', (e) => {
+  const items = menuItems(), i = items.indexOf(document.activeElement);
+  if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); closeMenu(true); }
+  if (e.key === 'ArrowDown') { e.preventDefault(); items[(i + 1) % items.length].focus(); }
+  if (e.key === 'ArrowUp') { e.preventDefault(); items[(i - 1 + items.length) % items.length].focus(); }
+  if (e.key === 'Tab') closeMenu();
+});
+if (/Mac|iPhone|iPad/.test(navigator.platform)) menu.querySelectorAll('kbd').forEach(k => { k.textContent = k.textContent.replace('Ctrl ', '⌘'); });
 $('btnShortcuts').onclick = showShortcuts;
 $('btnSample').onclick = loadSample;
 $('welcomeSample').onclick = loadSample;
@@ -440,7 +557,9 @@ const SHORTCUTS = [
     ['暫時不吸附（拖曳時）', ['按住 Alt']],
   ]],
   ['其他', [
-    ['匯出', ['Ctrl', 'E']],
+    ['匯出影片', ['Ctrl', 'E']],
+    ['開啟專案檔', ['Ctrl', 'O']],
+    ['下載專案檔', ['Ctrl', 'S']],
     ['顯示快捷鍵', ['?']],
   ]],
 ];
@@ -459,9 +578,17 @@ function isTyping(e) {
 
 document.addEventListener('keydown', (e) => {
   if (isModalOpen()) return;
-  if (isTyping(e)) return;
   const mod = e.ctrlKey || e.metaKey;
   const k = e.key;
+  // 開啟 / 下載專案檔在輸入框裡也要能用，不然會跳出瀏覽器的「另存網頁」
+  if (mod && !e.shiftKey && !e.altKey && (k === 'o' || k === 'O' || k === 's' || k === 'S')) {
+    e.preventDefault();
+    closeMenu();
+    if (k === 'o' || k === 'O') $('projectInput').click(); else saveProjectFile();
+    return;
+  }
+  if (isTyping(e)) return;
+  if (!menu.hidden) return; // 選單開著時交給選單處理
   const fps = store.project.fps;
   const handled = () => e.preventDefault();
 
@@ -541,7 +668,30 @@ window.addEventListener('drop', (e) => {
 // 其他
 // ============================================================
 $('mobileNoteClose').onclick = () => $('mobileNote').classList.add('dismissed');
-window.addEventListener('beforeunload', () => { if (saveTimer) saveNow(); });
+window.addEventListener('beforeunload', (e) => {
+  if (saveTimer) saveNow();
+  // 匯出或打包中：讓瀏覽器問使用者是否確定要離開
+  if (busy.count > 0) { e.preventDefault(); e.returnValue = ''; }
+});
+
+// 同一個瀏覽器開了兩個編輯器分頁：兩邊都會自動存到同一個地方，會互相覆蓋
+(function watchOtherTabs() {
+  if (typeof BroadcastChannel === 'undefined') return;
+  const me = Math.random().toString(36).slice(2);
+  const ch = new BroadcastChannel('onlinecut-editor');
+  let warned = false;
+  const warn = () => {
+    if (warned) return;
+    warned = true;
+    toast('OnlineCut 已經在另一個分頁開啟。兩邊都會自動儲存到同一個地方，同時編輯會互相覆蓋，建議只留一個分頁。', { type: 'error', timeout: 15000 });
+  };
+  ch.onmessage = (e) => {
+    if (!e.data || e.data.from === me) return;
+    if (e.data.type === 'hello') ch.postMessage({ type: 'here', from: me });
+    warn();
+  };
+  ch.postMessage({ type: 'hello', from: me });
+})();
 document.addEventListener('visibilitychange', () => { if (document.hidden) { player.pause(); saveNow(); } });
 runtime.onChange(() => { if (!player.playing) player.requestRender(); });
 

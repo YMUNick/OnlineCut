@@ -7,7 +7,7 @@ const near = (a, b, eps = 1e-6) => assert.ok(Math.abs(a - b) < eps, `${a} ≉ ${
 /** 一個有 10 秒影片素材、10 秒音訊素材、一張圖片的專案 */
 function setup() {
   let p = P.createProject();
-  p = P.addMedia(p, { id: 'mv', type: 'video', name: 'a.mp4', duration: 10, width: 1920, height: 1080, hasAudio: true });
+  p = P.addMedia(p, { id: 'mv', type: 'video', name: 'a.mp4', duration: 10, width: 1920, height: 1080 });
   p = P.addMedia(p, { id: 'ma', type: 'audio', name: 'a.mp3', duration: 10 });
   p = P.addMedia(p, { id: 'mi', type: 'image', name: 'a.png', width: 800, height: 600 });
   return p;

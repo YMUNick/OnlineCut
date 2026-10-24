@@ -108,6 +108,8 @@ export class MediaRuntime {
 
   /** 登記一個素材檔案；會在背景產生縮圖與波形 */
   async register(info, file, url = null) {
+    // 複製一份：之後偵測到的資訊（例如有沒有音軌）只記在這裡，不能偷改專案狀態
+    info = { ...info };
     const item = { info, file, url: url || URL.createObjectURL(file), image: null, thumbs: [], peaks: null, peaksPerSec: 0, audioBuffer: null };
     this.items.set(info.id, item);
     if (info.type === 'image') {

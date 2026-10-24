@@ -1,6 +1,6 @@
 // 匯出對話框：設定 → 進度 → 完成（預覽 + 下載）
 
-import { openModal, toast, escapeHtml } from './dialogs.js';
+import { openModal, toast, escapeHtml, busy } from './dialogs.js';
 import { icon } from './icons.js';
 import { exportVideo, detectExportSupport, outputSize, estimateBitrate, RESOLUTIONS, sanitizeFilename } from '../engine/exporter.js';
 import { getDuration } from '../core/project.js';
@@ -93,6 +93,7 @@ export function openExportDialog({ project, runtime, player }) {
     const bar = m.body.querySelector('#exBar'), pct = m.body.querySelector('#exPct'), eta = m.body.querySelector('#exEta'), phase = m.body.querySelector('#exPhase');
     const pb = m.body.querySelector('.progress');
     const t0 = performance.now();
+    busy.start();
     try {
       const res = await exportVideo({
         project, runtime, signal: ctrl.signal,
@@ -115,6 +116,8 @@ export function openExportDialog({ project, runtime, player }) {
       m.body.innerHTML = `<p style="color:#ff8a73">${icon('alert', 'icon-sm')} 匯出失敗：${escapeHtml(e.message || e)}</p><p class="hint-line">如果一直失敗，可以試著降低解析度，或改用最新版 Chrome。</p>`;
       footer.innerHTML = '<button class="ghost-btn" data-close2>關閉</button>';
       footer.querySelector('[data-close2]').onclick = () => m.close();
+    } finally {
+      busy.end();
     }
   }
 
