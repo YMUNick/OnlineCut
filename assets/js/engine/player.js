@@ -221,8 +221,22 @@ export class Player {
     });
   }
 
-  render() {
+  /** 畫面上有影片正在跳到新的位置（這時畫不出東西） */
+  seekingVideo(p) {
+    return activeClipsAt(p, this.time).some(c => {
+      const el = c.type === 'video' && this.elements.get(c.id)?.el;
+      return el && el.seeking && el.readyState < 2;
+    });
+  }
+
+  render(force = false) {
     const p = this.getProject();
+    // 影片定位中先保留上一格，等 seeked 再畫，避免閃一下黑畫面（暫停、拖曳播放頭時）
+    clearTimeout(this.fallbackRender);
+    if (!force && this.seekingVideo(p)) {
+      this.fallbackRender = setTimeout(() => this.render(true), 500);
+      return;
+    }
     this.layouts = drawFrame(this.ctx, p, this.time, {
       getSource: (clip) => {
         if (clip.type === 'image') return this.runtime.get(clip.mediaId)?.image;
@@ -235,6 +249,7 @@ export class Player {
   }
 
   destroy() {
+    clearTimeout(this.fallbackRender);
     this.pause();
     for (const id of [...this.elements.keys()]) this.dispose(id);
   }
