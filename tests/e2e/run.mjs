@@ -1575,7 +1575,7 @@ try {
 
   await test('在預覽上點兩下文字：直接改字、換字型、調字級，Esc 結束', async () => {
     const id = (await state()).project.clips.find(c => c.type === 'text').id;
-    await page.waitForTimeout(200);
+    await page.waitForFunction((id) => window.__oc.player.layouts?.has(id), id);
     const pt = await textCenter(id);
     await page.mouse.dblclick(pt.x, pt.y);
     await page.waitForSelector('.text-edit-area', { timeout: 3000 });
@@ -1624,6 +1624,8 @@ try {
     await page.click('.tab[data-tab="graphics"]');
     await page.click('[data-graphic="tx-burst"]');
     await waitFor(async () => (await state()).project.clips.length === 1, 3000, '加入');
+    // 等預覽畫好這一格（比較慢的電腦上，加入之後要過一下才有位置資訊）
+    await page.waitForFunction(() => window.__oc.player.layouts?.has(window.__oc.store.project.clips[0].id));
     const L = await page.evaluate(() => {
       const c = window.__oc.store.project.clips[0];
       const L = window.__oc.player.layouts.get(c.id);
