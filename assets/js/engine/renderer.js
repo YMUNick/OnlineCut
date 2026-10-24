@@ -241,9 +241,13 @@ function drawText(ctx, clip, layout, measure, hideGlyphs = false) {
   const ax = t.align === 'left' ? -w / 2 + pad : t.align === 'right' ? w / 2 - pad : 0;
   const top = -h / 2 + pad + lh / 2;
 
-  if (t.shadow) {
-    // shadowBlur 不受 transform 影響，要換算成 canvas 像素
-    const k = Math.hypot(ctx.getTransform().a, ctx.getTransform().b) || 1;
+  // shadowBlur 不受 transform 影響，要換算成 canvas 像素
+  const k = Math.hypot(ctx.getTransform().a, ctx.getTransform().b) || 1;
+  if (t.glow) {
+    // 發光：同色的大範圍模糊，畫兩次比較亮
+    ctx.shadowColor = t.glow;
+    ctx.shadowBlur = t.fontSize * 0.35 * k;
+  } else if (t.shadow) {
     ctx.shadowColor = 'rgba(0,0,0,.55)';
     ctx.shadowBlur = t.fontSize * 0.12 * k;
     ctx.shadowOffsetY = t.fontSize * 0.04 * k;
@@ -258,6 +262,7 @@ function drawText(ctx, clip, layout, measure, hideGlyphs = false) {
     }
     ctx.fillStyle = t.color || '#fff';
     ctx.fillText(line, ax, y);
+    if (t.glow) ctx.fillText(line, ax, y);
   });
 }
 

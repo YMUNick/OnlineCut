@@ -161,3 +161,14 @@ describe('文字的外框造型', () => {
     assert.equal(u.clips[0].text.deco, '');
   });
 });
+
+describe('文字發光', () => {
+  test('預設不發光；讀檔時檢查長度', () => {
+    const q = addClip(createProject(), 'text', { text: { glow: '#ff4fd8' } });
+    assert.equal(makeClip('text').text.glow, '');
+    assert.equal(normalizeProject(JSON.parse(JSON.stringify(q.project))).clips[0].text.glow, '#ff4fd8');
+    const raw = JSON.parse(JSON.stringify(q.project));
+    raw.clips[0].text.glow = 'x'.repeat(500);
+    assert.equal(normalizeProject(raw).clips[0].text.glow.length, 40);
+  });
+});

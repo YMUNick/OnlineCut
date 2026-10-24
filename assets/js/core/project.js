@@ -80,10 +80,11 @@ export function defaultText() {
     deco: '',               // 外框造型（見 engine/text-deco.js），'' 表示沒有
     decoColor: '#ffd23f',
     decoColor2: '#1b1440',
+    glow: '',               // 發光顏色（霓虹字），'' 表示不發光
   };
 }
 
-export const TEXT_DECO_IDS = ['burst', 'bubble', 'pill', 'ribbon', 'lower', 'badge', 'note', 'marker', 'tag'];
+export const TEXT_DECO_IDS = ['burst', 'bubble', 'pill', 'ribbon', 'lower', 'badge', 'note', 'marker', 'tag', 'cloud', 'shout', 'stamp', 'tape', 'neon', 'arrow', 'quote', 'caution'];
 
 // ============================================================
 // 畫面框（子母畫面、分割畫面）
@@ -634,7 +635,7 @@ function sanitizeMedia(id, m) {
 }
 
 const CLIP_FIELDS = ['name', 'mediaId', 'trackId', 'start', 'duration', 'srcIn', 'speed', 'volume', 'muted', 'fadeIn', 'fadeOut', 'opacity'];
-const TEXT_FIELDS = { content: 5000, fontFamily: 60, color: 40, background: 40, strokeColor: 40, decoColor: 40, decoColor2: 40 };
+const TEXT_FIELDS = { content: 5000, fontFamily: 60, color: 40, background: 40, strokeColor: 40, decoColor: 40, decoColor2: 40, glow: 40 };
 
 function sanitizeClip(c) {
   const fields = {};

@@ -149,7 +149,8 @@ export class TextEditor {
       padding: `${pad}px`,
       textAlign: t.align || 'center',
       color: t.color || '#fff',
-      textShadow: t.shadow ? `0 ${t.fontSize * 0.04 * k}px ${t.fontSize * 0.12 * k}px rgba(0,0,0,.55)` : 'none',
+      textShadow: t.glow ? `0 0 ${t.fontSize * 0.35 * k}px ${t.glow}, 0 0 ${t.fontSize * 0.35 * k}px ${t.glow}`
+        : t.shadow ? `0 ${t.fontSize * 0.04 * k}px ${t.fontSize * 0.12 * k}px rgba(0,0,0,.55)` : 'none',
       webkitTextStroke: t.strokeWidth > 0 ? `${t.strokeWidth * 2 * k}px ${t.strokeColor}` : '0',
     });
     area.scrollLeft = 0;

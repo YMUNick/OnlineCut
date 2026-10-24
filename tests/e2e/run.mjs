@@ -1508,7 +1508,7 @@ try {
     const tracksBefore = (await state()).project.tracks.filter(t => t.kind === 'video').length;
     await page.evaluate(() => window.__oc.player.seek(0));
     await page.click('.tab[data-tab="graphics"]');
-    assert.equal(await page.locator('.graphic-opt').count(), 45, '11 個文字貼圖 + 34 個圖案');
+    assert.equal(await page.locator('.graphic-opt').count(), 78, '23 個文字貼圖 + 55 個圖案');
     await page.click('[data-graphic="sunset"]');
     await waitFor(async () => (await state()).project.clips.length === 2, 5000, '背景');
     let s = await state();
@@ -1617,6 +1617,31 @@ try {
     await page.mouse.click(5, 5); // 畫面左上角（編輯框外面）
     await waitFor(async () => (await page.locator('.text-edit').count()) === 0, 2000, '結束編輯');
     assert.match((await state()).project.clips.find(c => c.id === id).text.content, /!$/);
+  });
+
+  await test('文字樣式：霓虹字會發光、可以關掉；圖案分頁可以直接跳到分類', async () => {
+    await newProjectUI();
+    await page.click('.tab[data-tab="text"]');
+    assert.equal(await page.locator('.text-preset').count(), 15);
+    await page.click('[data-preset="neon"]');
+    await waitFor(async () => (await state()).project.clips.length === 1, 3000, '加入');
+    const t = (await state()).project.clips[0].text;
+    assert.equal(t.glow, '#ff4fd8');
+    assert.equal(t.fontFamily, 'Bebas Neue');
+    // 屬性面板的「發光」打勾，取消後就不發光
+    const glow = page.locator('.field', { hasText: '發光' }).locator('input[type=checkbox]');
+    assert.equal(await glow.isChecked(), true);
+    await glow.uncheck();
+    assert.equal((await state()).project.clips[0].text.glow, '');
+    // 圖案分頁：點「邊框裝飾」直接捲到那一類
+    await page.click('.tab[data-tab="graphics"]');
+    await page.click('.graphic-jump [data-jump="frame"]');
+    await waitFor(() => page.evaluate(() => {
+      const panel = document.getElementById('graphicsPanel');
+      const h = panel.querySelector('.panel-sub[data-cat="frame"]');
+      const top = h.getBoundingClientRect().top - panel.getBoundingClientRect().top;
+      return top > 0 && top < 140;
+    }), 3000, '捲到邊框裝飾');
   });
 
   await test('匯出：外框造型畫得出來', async () => {

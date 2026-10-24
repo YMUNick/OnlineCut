@@ -5,6 +5,7 @@ import { icon } from './icons.js';
 import { escapeHtml } from './dialogs.js';
 import { dragPayload } from './timeline.js';
 import { _t } from '../i18n.js';
+import { ensureFont } from './fonts.js';
 
 const TYPE_ICON = { video: 'film', image: 'image', audio: 'music' };
 const TYPE_LABEL = { video: _t('影片'), image: _t('圖片'), audio: _t('音訊') };
@@ -16,6 +17,15 @@ export const TEXT_PRESETS = [
   { id: 'tag', label: _t('重點標籤'), sample: 'NEW', text: { fontSize: 64, fontWeight: 900, color: '#ffffff', background: '#ff5c39', shadow: false } },
   { id: 'outline', label: _t('描邊大字'), sample: _t('描邊大字'), text: { fontSize: 120, fontWeight: 900, color: '#ffd23f', strokeColor: '#000000', strokeWidth: 8, shadow: false } },
   { id: 'serif', label: _t('襯線引言'), sample: _t('「慢慢來，比較快」'), text: { fontSize: 84, fontWeight: 700, fontFamily: 'Noto Serif TC', color: '#f7efe2', shadow: true } },
+  { id: 'neon', label: _t('霓虹字'), sample: 'NEON NIGHT', text: { fontSize: 150, fontWeight: 400, fontFamily: 'Bebas Neue', color: '#fff0fb', glow: '#ff4fd8', shadow: false } },
+  { id: 'variety', label: _t('綜藝大字'), sample: _t('笑死我了'), text: { fontSize: 130, fontWeight: 400, fontFamily: 'Huninn', color: '#ffe14d', strokeColor: '#1b1440', strokeWidth: 10, shadow: false } },
+  { id: 'cute', label: _t('可愛圓體'), sample: _t('好吃到哭'), text: { fontSize: 100, fontWeight: 400, fontFamily: 'Huninn', color: '#ff7aa2', strokeColor: '#ffffff', strokeWidth: 7, shadow: false } },
+  { id: 'hand', label: _t('手寫筆記'), sample: _t('今天也辛苦了'), text: { fontSize: 84, fontWeight: 400, fontFamily: 'LXGW WenKai TC', color: '#ffffff', shadow: true } },
+  { id: 'cinema', label: _t('電影字幕'), sample: _t('很久很久以前……'), text: { fontSize: 54, fontWeight: 400, fontFamily: 'Noto Serif TC', color: '#f2f2f2', shadow: true }, transform: { y: 420 } },
+  { id: 'bignews', label: _t('英文大標'), sample: 'BIG NEWS', text: { fontSize: 200, fontWeight: 400, fontFamily: 'Bebas Neue', color: '#ffffff', shadow: true } },
+  { id: 'script', label: _t('草寫標題'), sample: 'Summer Vibes', text: { fontSize: 110, fontWeight: 400, fontFamily: 'Pacifico', color: '#ffffff', shadow: true } },
+  { id: 'marker', label: _t('麥克筆字'), sample: 'Wait for it…', text: { fontSize: 96, fontWeight: 400, fontFamily: 'Permanent Marker', color: '#ffd23f', shadow: true } },
+  { id: 'typewriter', label: _t('打字機'), sample: 'Hello, world.', text: { fontSize: 56, fontWeight: 400, fontFamily: 'ui-monospace', color: '#d9ffe0', background: 'rgba(0,0,0,0.75)', shadow: false } },
 ];
 
 export function formatBytes(n) {
@@ -51,14 +61,16 @@ export class MediaPanel {
     // 文字樣板
     els.textPresets.innerHTML = TEXT_PRESETS.map(p => {
       const t = p.text;
+      // 縮圖的字級：依實際大小縮小，但長的樣本要放得進格子（中文字算一個字寬，英文約 0.6）
+      const ems = [...p.sample].reduce((n, ch) => n + (/[\u2e80-\uffff]/.test(ch) ? 1 : 0.6), 0);
       const style = [
-        `font-size:${Math.round(Math.min(30, t.fontSize / 3.6))}px`,
+        `font-size:${Math.round(Math.max(12, Math.min(24, t.fontSize / 4.6, 112 / ems)))}px`,
         `font-weight:${t.fontWeight}`,
         `color:${t.color}`,
         t.fontFamily ? `font-family:'${t.fontFamily}',serif` : 'font-family:var(--font-display)',
         t.background ? `background:${t.background};padding:3px 10px;border-radius:4px` : '',
         t.strokeWidth ? `-webkit-text-stroke:${Math.max(1, t.strokeWidth / 4)}px ${t.strokeColor};paint-order:stroke fill` : '',
-        t.shadow ? 'text-shadow:0 2px 6px rgba(0,0,0,.6)' : '',
+        t.glow ? `text-shadow:0 0 6px ${t.glow},0 0 14px ${t.glow}` : t.shadow ? 'text-shadow:0 2px 6px rgba(0,0,0,.6)' : '',
       ].filter(Boolean).join(';');
       return `<button class="text-preset" data-preset="${p.id}" title="${_t('加入「{name}」', { name: p.label })}"><span><span style="${style}">${escapeHtml(p.sample)}</span><small>${p.label}</small></span></button>`;
     }).join('');
@@ -96,6 +108,11 @@ export class MediaPanel {
   }
 
   showTab(name) {
+    // 文字樣板用到的字型：第一次打開「文字」分頁才載入
+    if (name === 'text' && !this.presetFontsLoaded) {
+      this.presetFontsLoaded = true;
+      for (const p of TEXT_PRESETS) if (p.text.fontFamily) ensureFont(p.text.fontFamily, p.sample);
+    }
     this.els.tabs.forEach(t => {
       const on = t.dataset.tab === name;
       t.classList.toggle('active', on);

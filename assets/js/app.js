@@ -543,6 +543,7 @@ function addTextGraphic(g) {
   const W = proj.width, H = proj.height, m = Math.min(W, H) * 0.06;
   const pos = {
     tr: { x: W / 2 - m - outer.w / 2, y: -(H / 2 - m - outer.h / 2) },
+    tl: { x: -(W / 2 - m - outer.w / 2), y: -(H / 2 - m - outer.h / 2) },
     bl: { x: -(W / 2 - m - outer.w / 2), y: H / 2 - m * 1.6 - outer.h / 2 },
     bottom: { x: 0, y: H / 2 - m * 1.6 - outer.h / 2 },
   }[g.place] ?? { x: 0, y: 0 };

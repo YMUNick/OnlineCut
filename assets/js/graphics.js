@@ -189,6 +189,65 @@ BACKGROUNDS.push(
   },
 );
 
+BACKGROUNDS.push(
+  {
+    id: 'chalkboard', label: _t('黑板'),
+    draw: (W, H) => {
+      const r = rng(31), s = Math.min(W, H), b = s * 0.035;
+      let smudge = '';
+      for (let i = 0; i < 14; i++) smudge += `<ellipse cx="${r1(r() * W)}" cy="${r1(r() * H)}" rx="${r1(s * (0.1 + r() * 0.2))}" ry="${r1(s * (0.03 + r() * 0.06))}" fill="#fff" opacity="${(0.02 + r() * 0.04).toFixed(3)}" transform="rotate(${Math.round(r() * 40 - 20)})"/>`;
+      return `<defs>${linear('g', ['#35574a', '#24402f'], [0, 0, 1, 1])}${linear('w', ['#a0703f', '#6e4524'], [0, 0, 0, 1])}</defs>
+        <rect width="${W}" height="${H}" fill="url(#w)"/><rect x="${b}" y="${b}" width="${W - 2 * b}" height="${H - 2 * b}" fill="url(#g)"/>${smudge}
+        <rect x="${W * 0.62}" y="${H - b - s * 0.012}" width="${s * 0.12}" height="${s * 0.02}" rx="${s * 0.006}" fill="#f4f1e8"/>`;
+    },
+  },
+  {
+    id: 'gingham', label: _t('粉紅格紋'),
+    draw: (W, H) => {
+      const s = Math.round(Math.min(W, H) / 10);
+      return `<defs><pattern id="p" width="${s}" height="${s}" patternUnits="userSpaceOnUse">
+        <rect width="${s / 2}" height="${s}" fill="#ff8fab" fill-opacity=".38"/><rect width="${s}" height="${s / 2}" fill="#ff8fab" fill-opacity=".38"/></pattern></defs>
+        <rect width="${W}" height="${H}" fill="#fffafc"/><rect width="${W}" height="${H}" fill="url(#p)"/>`;
+    },
+  },
+  {
+    id: 'sunburst', label: _t('放射光芒'),
+    draw: (W, H) => {
+      const cx = W / 2, cy = H / 2, R = Math.hypot(W, H), n = 24;
+      let rays = '';
+      for (let i = 0; i < n; i += 2) {
+        const a0 = (i / n) * Math.PI * 2, a1 = ((i + 1) / n) * Math.PI * 2;
+        rays += `M${cx} ${cy}L${r1(cx + Math.cos(a0) * R)} ${r1(cy + Math.sin(a0) * R)}L${r1(cx + Math.cos(a1) * R)} ${r1(cy + Math.sin(a1) * R)}Z`;
+      }
+      return `<defs><radialGradient id="v" cx=".5" cy=".5" r=".7"><stop offset="0" stop-color="#fff6c8" stop-opacity=".9"/><stop offset=".35" stop-color="#fff6c8" stop-opacity="0"/><stop offset="1" stop-color="#d35400" stop-opacity=".45"/></radialGradient></defs>
+        <rect width="${W}" height="${H}" fill="#ffb703"/><path d="${rays}" fill="#ffd166"/><rect width="${W}" height="${H}" fill="url(#v)"/>`;
+    },
+  },
+  {
+    id: 'bokeh', label: _t('散景光點'),
+    draw: (W, H) => {
+      const r = rng(77), s = Math.min(W, H), colors = ['#ffd6a5', '#ffadad', '#caffbf', '#9bf6ff', '#bdb2ff', '#fdffb6'];
+      let dots = '';
+      for (let i = 0; i < 46; i++) dots += `<circle cx="${r1(r() * W)}" cy="${r1(r() * H)}" r="${r1(s * (0.02 + r() * 0.09))}" fill="${colors[i % colors.length]}" opacity="${(0.12 + r() * 0.3).toFixed(2)}"/>`;
+      return `<defs>${linear('g', ['#1a1033', '#0b1a33', '#05070f'], [0, 0, 1, 1])}<filter id="b" x="-20%" y="-20%" width="140%" height="140%"><feGaussianBlur stdDeviation="${r1(s * 0.006)}"/></filter></defs>
+        <rect width="${W}" height="${H}" fill="url(#g)"/><g filter="url(#b)">${dots}</g>`;
+    },
+  },
+  {
+    id: 'kraft', label: _t('牛皮紙'),
+    draw: (W, H) => {
+      const r = rng(55), s = Math.min(W, H);
+      let fibers = '';
+      for (let i = 0; i < 260; i++) {
+        const x = r() * W, y = r() * H, l = s * (0.01 + r() * 0.03), a = r() * Math.PI;
+        fibers += `M${r1(x)} ${r1(y)}l${r1(Math.cos(a) * l)} ${r1(Math.sin(a) * l)}`;
+      }
+      return `<defs><radialGradient id="v" cx=".5" cy=".5" r=".75"><stop offset=".55" stop-color="#5a3a1a" stop-opacity="0"/><stop offset="1" stop-color="#5a3a1a" stop-opacity=".35"/></radialGradient></defs>
+        <rect width="${W}" height="${H}" fill="#c9a57c"/><path d="${fibers}" stroke="#8a6440" stroke-opacity=".25" stroke-width="${r1(s * 0.0015)}" fill="none"/><rect width="${W}" height="${H}" fill="url(#v)"/>`;
+    },
+  },
+);
+
 // ============================================================
 // 貼圖（512×512，背景透明）
 // ============================================================
@@ -275,6 +334,102 @@ STICKERS.push(
     draw: () => `<circle cx="256" cy="256" r="226" fill="#2f7de1" stroke="#fff" stroke-width="16"/>
       <rect x="128" y="236" width="60" height="148" rx="12" fill="#fff"/>
       <path d="M204 236L258 140C266 120 300 122 300 150L292 214H368C392 214 406 236 400 258L380 362C376 378 362 388 346 388H204Z" fill="#fff"/>`,
+  },
+);
+
+STICKERS.push(
+  {
+    id: 'rainbow', label: _t('彩虹'),
+    draw: () => {
+      const colors = ['#ff595e', '#ff924c', '#ffca3a', '#8ac926', '#1982c4', '#6a4c93'];
+      const arcs = colors.map((c, i) => { const r = 200 - i * 22; return `<path d="M${256 - r} 330A${r} ${r} 0 0 1 ${256 + r} 330" stroke="${c}" stroke-width="23" fill="none"/>`; }).join('');
+      const cloud = (x) => `<g fill="#fff" stroke="#cfe0f5" stroke-width="6"><circle cx="${x - 34}" cy="338" r="34"/><circle cx="${x + 30}" cy="340" r="38"/><circle cx="${x}" cy="312" r="40"/></g><g fill="#fff"><circle cx="${x - 34}" cy="338" r="31"/><circle cx="${x + 30}" cy="340" r="35"/><circle cx="${x}" cy="312" r="37"/></g>`;
+      return arcs + cloud(66) + cloud(446);
+    },
+  },
+  {
+    id: 'cloud', label: _t('雲朵'),
+    draw: () => {
+      const c = [[170, 300, 90], [262, 250, 110], [356, 300, 90], [220, 330, 80], [310, 330, 80]];
+      return `<g fill="#9fc3ef">${c.map(([x, y, r]) => `<circle cx="${x}" cy="${y + 10}" r="${r + 8}"/>`).join('')}</g><g fill="#fff">${c.map(([x, y, r]) => `<circle cx="${x}" cy="${y}" r="${r}"/>`).join('')}</g>`;
+    },
+  },
+  {
+    id: 'sun', label: _t('太陽'),
+    draw: () => {
+      let rays = '';
+      const ray = (a) => `${r1(256 + Math.cos(a) * 236)} ${r1(256 + Math.sin(a) * 236)}`;
+      for (let i = 0; i < 12; i++) rays += `<path d="M256 256L${ray(i * Math.PI / 6 - 0.13)}L${ray(i * Math.PI / 6 + 0.13)}Z"/>`;
+      return `<defs>${linear('g', ['#fff3a0', '#ffc93c', '#ff9f1c'], [0, 0, 0, 1])}</defs><g fill="#ff9f1c">${rays}</g>
+        <circle cx="256" cy="256" r="130" fill="url(#g)" stroke="#fff" stroke-width="12"/>`;
+    },
+  },
+  {
+    id: 'moon', label: _t('月亮'),
+    draw: () => `<defs>${linear('g', ['#fff6c8', '#ffd96a'], [0, 0, 1, 1])}</defs>
+      <path d="M300 60A200 200 0 1 0 452 330A160 160 0 1 1 300 60Z" fill="url(#g)" stroke="#fff" stroke-width="12" stroke-linejoin="round"/>
+      <path d="${sparkle(400, 110, 34)}" fill="#fff6c8"/><path d="${sparkle(450, 200, 20)}" fill="#fff6c8"/>`,
+  },
+  {
+    id: 'coffee', label: _t('咖啡'),
+    draw: () => `<g stroke="#fff" stroke-width="12" stroke-linejoin="round">
+      <ellipse cx="246" cy="420" rx="170" ry="34" fill="#e9dccb"/>
+      <path d="M120 220H372L350 392Q346 412 326 412H166Q146 412 142 392Z" fill="#ff7a59"/>
+      <path d="M368 250Q450 250 440 312Q432 366 360 360" fill="none" stroke="#ff7a59" stroke-width="30"/></g>
+      <ellipse cx="246" cy="222" rx="124" ry="18" fill="#6b3e1f"/>
+      <g stroke="#cfd8e3" stroke-width="16" stroke-linecap="round" fill="none"><path d="M200 170Q180 140 200 110Q220 80 200 50"/><path d="M262 170Q242 140 262 110Q282 80 262 50"/></g>`,
+  },
+  {
+    id: 'gift', label: _t('禮物'),
+    draw: () => `<g stroke="#fff" stroke-width="12" stroke-linejoin="round">
+      <rect x="110" y="230" width="292" height="210" rx="14" fill="#ff4f8b"/>
+      <rect x="90" y="180" width="332" height="70" rx="14" fill="#ff7aa8"/></g>
+      <rect x="236" y="180" width="40" height="260" fill="#ffd23f"/>
+      <path d="M256 178C210 120 150 120 160 160C168 190 226 184 256 178ZM256 178C302 120 362 120 352 160C344 190 286 184 256 178Z" fill="#ffd23f" stroke="#fff" stroke-width="10" stroke-linejoin="round"/>`,
+  },
+  {
+    id: 'balloon', label: _t('氣球'),
+    draw: () => `<path d="M256 380Q236 430 266 470Q290 500 262 512" stroke="#b9c2cf" stroke-width="6" fill="none"/>
+      <ellipse cx="256" cy="200" rx="150" ry="176" fill="#ff3d5a" stroke="#fff" stroke-width="12"/>
+      <path d="M240 372L272 372L262 392L250 392Z" fill="#d72641"/>
+      <ellipse cx="196" cy="130" rx="34" ry="56" fill="#fff" opacity=".45" transform="rotate(24 196 130)"/>`,
+  },
+  {
+    id: 'cake', label: _t('蛋糕'),
+    draw: () => `<g stroke="#fff" stroke-width="10" stroke-linejoin="round">
+      <rect x="96" y="300" width="320" height="130" rx="18" fill="#ffb4a2"/>
+      <rect x="130" y="210" width="252" height="100" rx="16" fill="#fff0e6"/></g>
+      <path d="M130 240Q150 270 170 240Q190 275 212 240Q234 270 256 240Q278 275 300 240Q322 270 344 240Q364 270 382 240V226H130Z" fill="#ff7aa2"/>
+      <rect x="244" y="120" width="24" height="92" rx="6" fill="#7b5cff" stroke="#fff" stroke-width="6"/>
+      <path d="M256 60Q290 100 256 118Q222 100 256 60Z" fill="#ffc93c"/>
+      <circle cx="160" cy="364" r="12" fill="#fff"/><circle cx="256" cy="372" r="12" fill="#fff"/><circle cx="352" cy="364" r="12" fill="#fff"/>`,
+  },
+  {
+    id: 'camera', label: _t('相機'),
+    draw: () => `<g stroke="#fff" stroke-width="12" stroke-linejoin="round">
+      <path d="M190 150L214 110H298L322 150Z" fill="#3a3f52"/>
+      <rect x="70" y="150" width="372" height="250" rx="34" fill="#4c5368"/></g>
+      <circle cx="256" cy="275" r="92" fill="#1b1f2c" stroke="#fff" stroke-width="12"/>
+      <circle cx="256" cy="275" r="56" fill="#2f7de1"/><circle cx="236" cy="254" r="16" fill="#fff" opacity=".7"/>
+      <rect x="352" y="178" width="52" height="30" rx="8" fill="#ffd23f"/>`,
+  },
+  {
+    id: 'exclaim', label: _t('驚嘆號'),
+    draw: () => `<g fill="#ff3d5a" stroke="#fff" stroke-width="16" stroke-linejoin="round" paint-order="stroke">
+      <path d="M210 60H302L284 330H228Z"/><circle cx="256" cy="420" r="48"/></g>`,
+  },
+  {
+    id: 'question', label: _t('問號'),
+    draw: () => `<path d="M168 190C168 110 220 70 266 70C330 70 366 116 362 168C358 236 284 246 284 318V340" stroke="#fff" stroke-width="86" stroke-linecap="round" stroke-linejoin="round" fill="none"/>
+      <path d="M168 190C168 110 220 70 266 70C330 70 366 116 362 168C358 236 284 246 284 318V340" stroke="#2f7de1" stroke-width="56" stroke-linecap="round" stroke-linejoin="round" fill="none"/>
+      <circle cx="284" cy="436" r="44" fill="#2f7de1" stroke="#fff" stroke-width="15"/>`,
+  },
+  {
+    id: 'laugh', label: _t('笑到流淚'),
+    draw: () => `<defs>${linear('g', ['#ffe680', '#ffb800'], [0, 0, 0, 1])}</defs><circle cx="256" cy="256" r="220" fill="url(#g)" stroke="#fff" stroke-width="14"/>
+      <path d="M150 210Q186 170 222 210M290 210Q326 170 362 210" stroke="#5a3a00" stroke-width="20" fill="none" stroke-linecap="round"/>
+      <path d="M150 270H362Q356 390 256 392Q156 390 150 270Z" fill="#5a3a00"/><path d="M190 340Q256 300 322 340Q300 386 256 388Q212 386 190 340Z" fill="#ff7a8a"/>
+      <path d="M120 230Q86 280 110 306Q136 318 140 280Z" fill="#6ec6ff" stroke="#fff" stroke-width="6"/><path d="M392 230Q426 280 402 306Q376 318 372 280Z" fill="#6ec6ff" stroke="#fff" stroke-width="6"/>`,
   },
 );
 
@@ -371,6 +526,65 @@ FRAMES.push(
   },
 );
 
+FRAMES.push(
+  {
+    id: 'live', label: _t('直播畫面'),
+    draw: (W, H) => {
+      const s = Math.min(W, H), m = s * 0.045, ph = s * 0.065, f = s * 0.036;
+      const heart = (x, y, k, c, o) => `<path d="M${x} ${y + 9 * k}C${x - 18 * k} ${y - 2 * k} ${x - 14 * k} ${y - 16 * k} ${x} ${y - 7 * k}C${x + 14 * k} ${y - 16 * k} ${x + 18 * k} ${y - 2 * k} ${x} ${y + 9 * k}Z" fill="${c}" opacity="${o}"/>`;
+      const hk = s / 260;
+      return `<rect x="${m}" y="${m}" width="${r1(ph * 1.9)}" height="${r1(ph)}" rx="${r1(ph * 0.18)}" fill="#e0262f"/>
+        <text x="${r1(m + ph * 0.95)}" y="${r1(m + ph / 2)}" dy=".35em" text-anchor="middle" font-family="Arial, Helvetica, sans-serif" font-weight="700" font-size="${r1(f)}" fill="#fff">LIVE</text>
+        <rect x="${r1(m + ph * 2.05)}" y="${m}" width="${r1(ph * 2.2)}" height="${r1(ph)}" rx="${r1(ph * 0.18)}" fill="#000" fill-opacity=".5"/>
+        <text x="${r1(m + ph * 3.15)}" y="${r1(m + ph / 2)}" dy=".35em" text-anchor="middle" font-family="Arial, Helvetica, sans-serif" font-weight="700" font-size="${r1(f)}" fill="#fff">&#x1F441; 1.2K</text>
+        ${heart(W - m * 2.2, H - m * 2.4, hk * 1.6, '#ff3d7f', 0.95)}${heart(W - m * 3, H - m * 4.2, hk * 1.2, '#ff7aa2', 0.8)}${heart(W - m * 1.8, H - m * 5.8, hk, '#ffb3c8', 0.6)}${heart(W - m * 2.7, H - m * 7.2, hk * 0.8, '#ffd1dc', 0.45)}`;
+    },
+  },
+  {
+    id: 'snow', label: _t('下雪'),
+    draw: (W, H) => {
+      const r = rng(9), s = Math.min(W, H);
+      let flakes = '';
+      for (let i = 0; i < 170; i++) flakes += `<circle cx="${r1(r() * W)}" cy="${r1(r() * H)}" r="${r1(s * (0.002 + Math.pow(r(), 3) * 0.012))}" fill="#fff" opacity="${(0.4 + r() * 0.55).toFixed(2)}"/>`;
+      return `<defs><linearGradient id="fog" x1="0" y1="0" x2="0" y2="1"><stop offset=".8" stop-color="#fff" stop-opacity="0"/><stop offset="1" stop-color="#fff" stop-opacity=".35"/></linearGradient></defs>${flakes}<rect width="${W}" height="${H}" fill="url(#fog)"/>`;
+    },
+  },
+  {
+    id: 'hearts', label: _t('愛心飄落'),
+    draw: (W, H) => {
+      const r = rng(14), s = Math.min(W, H), colors = ['#ff3d7f', '#ff7aa2', '#ffb3c8', '#ff4f8b'];
+      let out = '';
+      for (let i = 0; i < 34; i++) {
+        // 集中在左右兩側，中間留給主角
+        const side = i % 2 ? r() * 0.28 : 1 - r() * 0.28;
+        const x = side * W, y = r() * H, k = s * (0.012 + r() * 0.03), a = Math.round(r() * 50 - 25);
+        out += `<path d="M0 ${r1(k * 0.9)}C${r1(-k * 1.8)} ${r1(-k * 0.2)} ${r1(-k * 1.4)} ${r1(-k * 1.6)} 0 ${r1(-k * 0.7)}C${r1(k * 1.4)} ${r1(-k * 1.6)} ${r1(k * 1.8)} ${r1(-k * 0.2)} 0 ${r1(k * 0.9)}Z" fill="${colors[i % 4]}" opacity="${(0.55 + r() * 0.4).toFixed(2)}" transform="translate(${r1(x)} ${r1(y)}) rotate(${a})"/>`;
+      }
+      return out;
+    },
+  },
+  {
+    id: 'party', label: _t('派對彩帶'),
+    draw: (W, H) => {
+      const r = rng(42), s = Math.min(W, H), colors = ['#ff5c39', '#ffd23f', '#3ddc97', '#4cc9f0', '#f72585', '#7b5cff'];
+      let out = '';
+      // 左上、右上兩個角落的彩帶與紙花
+      for (const cx of [0, W]) {
+        const dir = cx === 0 ? 1 : -1;
+        for (let i = 0; i < 6; i++) {
+          const x0 = cx + dir * s * (0.02 + i * 0.05), len = s * (0.25 + r() * 0.2);
+          out += `<path d="M${r1(x0)} 0Q${r1(x0 + dir * len * 0.4)} ${r1(len * 0.35)} ${r1(x0 + dir * len * 0.1)} ${r1(len * 0.6)}T${r1(x0 + dir * len * 0.5)} ${r1(len)}" stroke="${colors[i % 6]}" stroke-width="${r1(s * 0.008)}" fill="none" stroke-linecap="round"/>`;
+        }
+        for (let i = 0; i < 40; i++) {
+          const x = cx + dir * r() * s * 0.45, y = r() * s * 0.45, z = s * (0.007 + r() * 0.01);
+          out += `<rect x="${r1(x - z)}" y="${r1(y - z / 2)}" width="${r1(z * 2)}" height="${r1(z)}" fill="${colors[i % 6]}" transform="rotate(${Math.round(r() * 180)} ${r1(x)} ${r1(y)})"/>`;
+        }
+      }
+      return out;
+    },
+  },
+);
+
 export const GRAPHICS = [
   ...BACKGROUNDS.map(g => ({ ...g, category: 'bg' })),
   ...STICKERS.map(g => ({ ...g, category: 'sticker' })),
@@ -394,7 +608,7 @@ export function renderGraphic(g, W, H) {
 
 // ============================================================
 // 文字貼圖：有外框造型的文字片段，加入後可以直接改字、換字型
-// place：放在畫面的哪裡（tr 右上、bl 左下、bottom 下方、center 中間）
+// place：放在畫面的哪裡（tr 右上、tl 左上、bl 左下、bottom 下方、center 中間）
 // ============================================================
 const base = { fontFamily: 'Noto Sans TC', italic: false, background: '', strokeWidth: 0, strokeColor: '#000000', align: 'center', shadow: false };
 export const TEXT_GRAPHICS = [
@@ -420,6 +634,30 @@ export const TEXT_GRAPHICS = [
     text: { ...base, content: _t('重點在這裡'), fontSize: 88, fontWeight: 900, color: '#111111', deco: 'marker', decoColor: '#ffe14d', decoColor2: '#ffe14d' } },
   { id: 'tx-tag', label: _t('價格標籤'), place: 'tr', rotation: 6,
     text: { ...base, content: '$199', fontSize: 76, fontWeight: 900, color: '#ffffff', deco: 'tag', decoColor: '#2ecc71', decoColor2: 'rgba(255, 255, 255, 0.85)' } },
+  { id: 'tx-think', label: _t('思考泡泡'), place: 'center',
+    text: { ...base, content: _t('嗯……'), fontSize: 80, fontWeight: 700, color: '#1b1440', deco: 'cloud', decoColor: '#ffffff', decoColor2: '#1b1440' } },
+  { id: 'tx-shout', label: _t('大喊框'), place: 'center', rotation: -6,
+    text: { ...base, content: _t('什麼？！'), fontSize: 96, fontWeight: 900, color: '#ff2742', strokeColor: '#ffffff', strokeWidth: 4, deco: 'shout', decoColor: '#ffe14d', decoColor2: '#1b1440' } },
+  { id: 'tx-stamp', label: _t('推薦印章'), place: 'tr', rotation: -12,
+    text: { ...base, content: _t('推薦'), fontSize: 84, fontWeight: 900, color: '#e0262f', deco: 'stamp', decoColor: '#e0262f', decoColor2: 'rgba(255, 255, 255, 0.85)' } },
+  { id: 'tx-tape', label: _t('紙膠帶標題'), place: 'center', rotation: -3,
+    text: { ...base, content: _t('今日重點'), fontSize: 72, fontWeight: 700, fontFamily: 'LXGW WenKai TC', color: '#4a2f1a', deco: 'tape', decoColor: '#ffd6a5', decoColor2: '#ffffff' } },
+  { id: 'tx-neon', label: _t('霓虹燈牌'), place: 'center',
+    text: { ...base, content: 'OPEN', fontSize: 110, fontWeight: 400, fontFamily: 'Bebas Neue', color: '#fff0fb', glow: '#ff4fd8', deco: 'neon', decoColor: '#ff4fd8', decoColor2: 'rgba(20, 4, 30, 0.55)' } },
+  { id: 'tx-arrow', label: _t('指示牌'), place: 'center',
+    text: { ...base, content: _t('往這邊走'), fontSize: 64, fontWeight: 900, color: '#ffffff', deco: 'arrow', decoColor: '#2f7de1', decoColor2: '#1b4f99' } },
+  { id: 'tx-quote', label: _t('金句框'), place: 'center',
+    text: { ...base, content: _t('做就對了'), fontSize: 88, fontWeight: 700, fontFamily: 'Noto Serif TC', color: '#ffffff', shadow: true, deco: 'quote', decoColor: '#ffd23f', decoColor2: '#ffd23f' } },
+  { id: 'tx-caution', label: _t('注意警示'), place: 'center',
+    text: { ...base, content: _t('注意！'), fontSize: 80, fontWeight: 900, color: '#111111', deco: 'caution', decoColor: '#ffd23f', decoColor2: '#111111' } },
+  { id: 'tx-live', label: _t('直播中'), place: 'tl',
+    text: { ...base, content: '● LIVE', fontSize: 52, fontWeight: 900, color: '#ffffff', deco: 'pill', decoColor: '#e0262f', decoColor2: '#ffffff' } },
+  { id: 'tx-chapter', label: _t('章節標籤'), place: 'bl',
+    text: { ...base, content: _t('01　開箱'), fontSize: 56, fontWeight: 900, color: '#ffffff', align: 'left', deco: 'lower', decoColor: '#ff5c39', decoColor2: '#ffd23f' } },
+  { id: 'tx-cute', label: _t('可愛對話框'), place: 'center',
+    text: { ...base, content: _t('好可愛～'), fontSize: 80, fontWeight: 400, fontFamily: 'Huninn', color: '#ff4f8b', deco: 'bubble', decoColor: '#fff0f6', decoColor2: '#ff4f8b' } },
+  { id: 'tx-hot', label: _t('熱門圓章'), place: 'tr', rotation: 10,
+    text: { ...base, content: 'HOT', fontSize: 80, fontWeight: 900, color: '#ffffff', deco: 'badge', decoColor: '#ff5c39', decoColor2: '#ffd23f' } },
 ];
 
 export function getTextGraphic(id) {

@@ -56,6 +56,13 @@ export class GraphicsPanel {
     this.el = el;
     this.key = null;
     el.addEventListener('click', (e) => {
+      const cat = e.target.closest('[data-jump]')?.dataset.jump;
+      if (cat) {
+        const h = el.querySelector(`.panel-sub[data-cat="${cat}"]`);
+        const bar = el.querySelector('.graphic-jump');
+        if (h) el.scrollTo({ top: h.offsetTop - (bar?.offsetHeight || 0) - 18, behavior: 'smooth' });
+        return;
+      }
       const id = e.target.closest('[data-graphic]')?.dataset.graphic;
       if (id) onAdd(id);
     });
@@ -75,8 +82,10 @@ export class GraphicsPanel {
           <button class="graphic-opt" data-graphic="${g.id}" title="${_t('加入「{name}」', { name: escapeHtml(g.label) })}"><span class="graphic-thumb"><canvas width="240" height="150" data-text-thumb="${g.id}"></canvas></span><small>${escapeHtml(g.label)}</small></button>`).join('')
       : GRAPHICS.filter(g => g.category === cat.id).map(g => `
           <button class="graphic-opt" data-graphic="${g.id}" title="${_t('加入「{name}」', { name: escapeHtml(g.label) })}"><span class="graphic-thumb">${thumb(g)}</span><small>${escapeHtml(g.label)}</small></button>`).join('');
-    this.el.innerHTML = `<p class="panel-note">${_t('點一下加到播放頭的位置。背景會放在最下面，貼圖和邊框放在最上面。')}</p>`
-      + GRAPHIC_CATEGORIES.map(cat => `<h4 class="panel-sub">${cat.label}${cat.hint ? `<span class="panel-sub-hint">${cat.hint}</span>` : ''}</h4>
+    // 分類很多：上方的小按鈕可以直接跳到那一類
+    const jump = `<div class="chip-row graphic-jump">${GRAPHIC_CATEGORIES.map(c => `<button class="chip" data-jump="${c.id}">${c.label}</button>`).join('')}</div>`;
+    this.el.innerHTML = jump + `<p class="panel-note">${_t('點一下加到播放頭的位置。背景會放在最下面，貼圖和邊框放在最上面。')}</p>`
+      + GRAPHIC_CATEGORIES.map(cat => `<h4 class="panel-sub" data-cat="${cat.id}">${cat.label}${cat.hint ? `<span class="panel-sub-hint">${cat.hint}</span>` : ''}</h4>
         <div class="graphic-grid ${cat.id}" style="--ratio:${p.width}/${p.height}">${items(cat)}
         </div>`).join('');
     this.drawTextThumbs();

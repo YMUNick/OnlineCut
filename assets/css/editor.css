@@ -186,7 +186,11 @@ html[lang="en"] .tab .icon { display: none; }
 .media-card.used .media-thumb::before { content: ''; position: absolute; top: 7px; left: 7px; width: 7px; height: 7px; border-radius: 50%; background: var(--accent); box-shadow: 0 0 0 2px rgba(0,0,0,.5); z-index: 1; }
 
 /* 文字樣板 */
-.text-presets { display: grid; gap: 10px; }
+.text-presets { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+.text-preset { min-width: 0; }
+.text-preset > span { display: block; max-width: 100%; }
+.text-preset > span > span:first-child { display: inline-block; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; vertical-align: middle; }
+.graphic-jump { position: sticky; top: -14px; z-index: 2; margin: -14px -14px 12px; padding: 10px 14px; background: var(--panel); border-bottom: 1px solid var(--line); }
 
 /* 圖案、版型 */
 .panel-sub { margin: 16px 0 8px; font-size: 11px; font-weight: 700; letter-spacing: .06em; color: var(--text-3); }

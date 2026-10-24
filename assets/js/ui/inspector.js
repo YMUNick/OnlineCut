@@ -12,6 +12,8 @@ const TYPE_LABEL = { video: _t('影片片段'), image: _t('圖片片段'), text:
 export const DECO_LABELS = {
   burst: _t('爆炸標'), bubble: _t('對話框'), pill: _t('膠囊按鈕'), ribbon: _t('絲帶'), lower: _t('字幕條'),
   badge: _t('圓章'), note: _t('便利貼'), marker: _t('螢光筆'), tag: _t('價格標籤'),
+  cloud: _t('思考泡泡'), shout: _t('大喊框'), stamp: _t('印章'), tape: _t('紙膠帶'),
+  neon: _t('霓虹燈牌'), arrow: _t('指示牌'), quote: _t('金句框'), caution: _t('警示牌'),
 };
 const FILTER_PRESETS = [
   [_t('原始'), { brightness: 100, contrast: 100, saturation: 100, grayscale: 0, blur: 0 }],
@@ -264,6 +266,20 @@ export class Inspector {
     sw.style.cssText = 'display:flex;align-items:center;gap:14px';
     sw.append(sc.el, shLbl);
     s.appendChild(this.row(_t('描邊色'), sw, true));
+
+    // 發光（霓虹字）
+    const glowOn = document.createElement('input');
+    glowOn.type = 'checkbox';
+    const glowColor = this.colorInput(v => this.commit(() => ({ text: { glow: v } }), 'glow'));
+    glowOn.onchange = () => this.commit(() => ({ text: { glow: glowOn.checked ? (glowColor.input.value !== '#000000' ? glowColor.input.value : '#ff4fd8') : '' } }), 'glowOn');
+    this.bind(glowOn, c => { glowOn.checked = !!c.text.glow; glowColor.set(c.text.glow ? parseColor(c.text.glow).hex : '#ff4fd8'); glowColor.input.disabled = !c.text.glow; });
+    const gl = document.createElement('label');
+    gl.className = 'check';
+    gl.append(glowOn, document.createTextNode(_t('顯示')));
+    const gw = document.createElement('div');
+    gw.style.cssText = 'display:flex;align-items:center;gap:10px';
+    gw.append(gl, glowColor.el);
+    s.appendChild(this.row(_t('發光'), gw, true));
 
     // 外框造型（爆炸標、對話框…）：造型跟著文字大小變化
     const deco = document.createElement('select');
