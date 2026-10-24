@@ -346,6 +346,44 @@ export function moveClip(project, id, { start, trackId }) {
 }
 
 /**
+ * 拖曳放下片段（可換軌）。跟 moveClip 不同：放在別的片段上時不會彈回原位，而是插進去——
+ * 落在某個片段的前半段就插在它前面，後半段就插在它後面，後面撞到的片段依序往後推。
+ * closeGap：同一軌移動後，把原本的位置空出來的空隙補起來（波紋模式）。
+ */
+export function placeClip(project, id, { start, trackId, closeGap = false }) {
+  const clip = getClip(project, id);
+  if (!clip) return project;
+  const target = getTrack(project, trackId ?? clip.trackId);
+  if (!canHost(target, clip.type) || target.locked) return project;
+  const EPS = 1e-6;
+  return produce(project, p => {
+    const c = getClip(p, id);
+    const from = { trackId: c.trackId, start: c.start, end: clipEnd(c) };
+    const others = clipsOnTrack(p, target.id, [id]);
+    let s = Math.max(0, start ?? c.start);
+    const hit = others.find(o => s > o.start + EPS && s < clipEnd(o) - EPS);
+    if (hit) s = s < hit.start + hit.duration / 2 ? hit.start : clipEnd(hit);
+    c.trackId = target.id;
+    c.start = s;
+    let end = s + c.duration;
+    for (const o of others) {
+      if (o.start < s - EPS) continue;
+      if (o.start >= end - EPS) break; // 有空隙可以吸收，後面的不用動
+      o.start = end;
+      end = clipEnd(o);
+    }
+    if (closeGap && from.trackId === target.id) {
+      const gap = from.end - from.start;
+      const track = clipsOnTrack(p, target.id);
+      // 只有原本的位置完全空出來才補，免得只是小挪一下又被拉回去
+      if (!track.some(o => o.start < from.end - EPS && clipEnd(o) > from.start + EPS)) {
+        for (const o of track) if (o.start >= from.end - EPS) o.start = Math.max(0, o.start - gap);
+      }
+    }
+  });
+}
+
+/**
  * 修剪片段左緣或右緣到時間軸上的 time。
  * 會受素材長度、相鄰片段與最短一格限制。
  */

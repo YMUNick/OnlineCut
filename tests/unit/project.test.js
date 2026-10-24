@@ -475,3 +475,64 @@ describe('normalizeProject', () => {
     assert.ok(n.tracks.some(t => t.kind === 'audio'));
   });
 });
+
+describe('placeClip（時間軸拖曳放下）', () => {
+  /** V1 上緊緊排著 A[0,4] B[4,8] C[8,12] 三張圖片 */
+  function packed() {
+    let p = setup();
+    const ids = [];
+    for (const name of ['A', 'B', 'C']) {
+      const r = P.addClip(p, 'image', { mediaId: 'mi', trackId: v1(p).id, duration: 4, name });
+      p = r.project;
+      ids.push(r.clip.id);
+    }
+    return { p, A: ids[0], B: ids[1], C: ids[2] };
+  }
+  const order = (p) => P.clipsOnTrack(p, v1(p).id).map(c => `${c.name}@${c.start}`).join(' ');
+
+  test('緊密排列時，舊的 moveClip 會彈回原位（這就是要修的問題）', () => {
+    const { p, B } = packed();
+    assert.equal(P.getClip(P.moveClip(p, B, { start: 1 }), B).start, 4);
+  });
+  test('拖到前一個片段的前半段：插到它前面，後面的往後推', () => {
+    const { p, C } = packed();
+    assert.equal(order(P.placeClip(p, C, { start: 1 })), 'C@0 A@4 B@8');
+  });
+  test('拖到後一個片段的後半段：插到它後面', () => {
+    const { p, A } = packed();
+    assert.equal(order(P.placeClip(p, A, { start: 7 })), 'B@4 A@8 C@12');
+  });
+  test('波紋模式：原本的位置會補起來（等於重新排序）', () => {
+    const { p, A } = packed();
+    assert.equal(order(P.placeClip(p, A, { start: 11, closeGap: true })), 'B@0 C@4 A@8');
+  });
+  test('波紋模式下小挪一下不會被拉回去', () => {
+    let { p, C } = packed();
+    p = P.placeClip(p, C, { start: 9, closeGap: true });
+    assert.equal(P.getClip(p, C).start, 9);
+  });
+  test('往後拖到空的地方：直接放，不推別人', () => {
+    const { p, B } = packed();
+    assert.equal(order(P.placeClip(p, B, { start: 20 })), 'A@0 C@8 B@20');
+  });
+  test('被推的片段遇到空隙就停，後面的不受影響', () => {
+    let { p, C } = packed();
+    p = P.placeClip(p, C, { start: 30 }); // A[0,4] B[4,8] ... C[30,34]
+    const r = P.addClip(p, 'image', { mediaId: 'mi', trackId: v1(p).id, start: 40, duration: 2, name: 'D' });
+    p = P.placeClip(r.project, C, { start: 0 });
+    assert.equal(order(p), 'C@0 A@4 B@8 D@40');
+  });
+  test('換軌、不相容或鎖定的軌道', () => {
+    const { p, A } = packed();
+    const moved = P.placeClip(p, A, { start: 2, trackId: v2(p).id });
+    assert.equal(P.getClip(moved, A).trackId, v2(p).id);
+    assert.equal(P.getClip(moved, A).start, 2);
+    assert.equal(P.placeClip(p, A, { start: 2, trackId: a1(p).id }), p);
+    const locked = P.updateTrack(p, v2(p).id, { locked: true });
+    assert.equal(P.placeClip(locked, A, { start: 2, trackId: v2(p).id }), locked);
+  });
+  test('不會跑到 0 之前', () => {
+    const { p, B } = packed();
+    assert.equal(P.getClip(P.placeClip(p, B, { start: -50 }), B).start, 0);
+  });
+});

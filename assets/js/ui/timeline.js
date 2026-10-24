@@ -1,7 +1,7 @@
 // 時間軸：繪製軌道與片段，處理拖曳移動、修剪、吸附、播放頭拖曳、縮放與素材拖放
 
 import {
-  clipEnd, getClip, getTrack, canHost, moveClip, trimClip, snapPoints, snapClipStart, snapTime,
+  clipEnd, getClip, getTrack, canHost, moveClip, placeClip, trimClip, mediaLimit, snapPoints, snapClipStart, snapTime,
   getDuration, sourceTime, TRACK_KIND_FOR_TYPE, updateTrack, removeTrack,
 } from '../core/project.js';
 import { rulerStep, formatRulerLabel, clamp } from '../core/time.js';
@@ -140,8 +140,11 @@ export class Timeline {
       }
       el.className = `clip ${c.type}${sel.has(c.id) ? ' selected' : ''}`;
       el.style.left = `${this.timeToX(c.start)}px`;
-      el.style.width = `${Math.max(2, c.duration * this.pps)}px`;
-      el.style.top = '';
+      const w = c.duration * this.pps;
+      el.style.width = `${Math.max(2, w)}px`;
+      // 很短的片段：修剪把手變細，太短就拿掉，讓中間永遠抓得到可以移動
+      el.classList.toggle('narrow', w < 48);
+      el.classList.toggle('tiny', w < 18);
       el.querySelector('.clip-fade.in').style.width = `${c.fadeIn * this.pps}px`;
       el.querySelector('.clip-fade.out').style.width = `${c.fadeOut * this.pps}px`;
       const label = c.type === 'text' ? (c.text.content.split('\n')[0] || '文字') : (c.name || p.media[c.mediaId]?.name || c.type);
@@ -404,51 +407,107 @@ export class Timeline {
     line.style.left = `${this.timeToX(t)}px`;
   }
 
+  /**
+   * 拖曳時游標靠近時間軸左右邊緣就自動捲動，才能拖到畫面外更早或更晚的地方。
+   * offset() 是開始拖曳後捲動了多少 px；捲動時呼叫 onScroll 重新計算位置。
+   */
+  autoScroll(onScroll) {
+    const sc = this.els.scroll;
+    const sl0 = sc.scrollLeft;
+    const EDGE = 48, SPEED = 18;
+    let x = null;
+    let raf = requestAnimationFrame(function tick() {
+      raf = requestAnimationFrame(tick);
+      if (x == null) return;
+      const r = sc.getBoundingClientRect();
+      const v = x > r.right - EDGE ? Math.min(1, (x - r.right + EDGE) / EDGE)
+        : x < r.left + EDGE ? -Math.min(1, (r.left + EDGE - x) / EDGE) : 0;
+      if (!v) return;
+      const before = sc.scrollLeft;
+      sc.scrollLeft += v * SPEED;
+      if (sc.scrollLeft !== before) onScroll();
+    });
+    return {
+      track: (ev) => { x = ev.clientX; },
+      offset: () => sc.scrollLeft - sl0,
+      stop: () => cancelAnimationFrame(raf),
+    };
+  }
+
+  /** 拖曳結束（放開、或指標被系統取消） */
+  onDragEnd(fn) {
+    const end = () => {
+      window.removeEventListener('pointerup', end);
+      window.removeEventListener('pointercancel', end);
+      fn();
+    };
+    window.addEventListener('pointerup', end);
+    window.addEventListener('pointercancel', end);
+  }
+
   beginTrim(e, clip, edge) {
     const session = Math.random().toString(36).slice(2);
+    // 每次都從開始拖曳時的狀態計算，避免累積誤差
+    const base = this.store.project;
     const origT = edge === 'start' ? clip.start : clipEnd(clip);
     const x0 = e.clientX;
     const points = this.snapPointsFor([clip.id]);
-    const move = (ev) => {
-      let t = origT + (ev.clientX - x0) / this.pps;
+    let last = e, hinted = false;
+    const apply = (ev) => {
+      let t = origT + (ev.clientX - x0 + scroller.offset()) / this.pps;
       let snapped = null;
       if (this.store.snap && !ev.altKey) {
         const r = snapTime(t, points, SNAP_PX / this.pps);
         if (r.snapped) { t = r.time; snapped = r.point; }
       }
       this.showSnap(snapped);
-      const base = this.drag.base;
-      this.store.commit(trimClip(base, clip.id, edge, t), { key: `trim-${session}` });
+      const next = trimClip(base, clip.id, edge, t);
+      if (!hinted) hinted = this.explainTrimLimit(next, clip, edge, t);
+      this.store.commit(next, { key: `trim-${session}` });
     };
-    const up = () => {
+    const scroller = this.autoScroll(() => apply(last));
+    const move = (ev) => { last = ev; scroller.track(ev); apply(ev); };
+    this.drag = { type: 'trim' };
+    window.addEventListener('pointermove', move);
+    this.onDragEnd(() => {
       window.removeEventListener('pointermove', move);
-      window.removeEventListener('pointerup', up);
+      scroller.stop();
       this.showSnap(null);
       this.drag = null;
-    };
-    // 每次都從開始拖曳時的狀態計算，避免累積誤差
-    this.drag = { type: 'trim', base: this.store.project };
-    window.addEventListener('pointermove', move);
-    window.addEventListener('pointerup', up);
+    });
+  }
+
+  /** 修剪拉不動的時候說明原因（一次拖曳只說一次）。回傳是否說明了 */
+  explainTrimLimit(next, clip, edge, wanted) {
+    const c = getClip(next, clip.id);
+    const got = edge === 'start' ? c.start : clipEnd(c);
+    const outward = edge === 'start' ? wanted < got : wanted > got;
+    if (!outward || Math.abs(wanted - got) * this.pps < 30) return false;
+    const fromMedia = c.type === 'video' || c.type === 'audio';
+    let msg;
+    if (edge === 'start') msg = fromMedia && c.srcIn < 1e-6 ? '已經是素材的開頭，不能再往左拉長' : got <= 1e-6 ? '已經在時間軸最前面' : '前面有其他片段擋住';
+    else msg = fromMedia && Math.abs(c.srcIn + c.duration * c.speed - mediaLimit(next, c)) < 1e-3 ? '已經是素材的結尾，不能再往右拉長' : '後面有其他片段擋住';
+    this.emitToast?.(`${msg}。要移動整段片段，請按住片段中間拖曳。`);
+    return true;
   }
 
   beginMove(e, clip) {
-    const p = this.store.project;
+    const base = this.store.project;
     const ids = this.store.selection.filter(id => {
-      const c = getClip(p, id);
-      return c && !getTrack(p, c.trackId)?.locked;
+      const c = getClip(base, id);
+      return c && !getTrack(base, c.trackId)?.locked;
     });
-    const group = ids.map(id => getClip(p, id));
+    const group = ids.map(id => getClip(base, id));
     const single = group.length === 1;
     const x0 = e.clientX;
     const minStart = Math.min(...group.map(c => c.start));
     const points = this.snapPointsFor(ids);
-    let moved = false, delta = 0, targetTrack = null;
+    const session = Math.random().toString(36).slice(2);
+    let moved = false, last = e;
 
-    const move = (ev) => {
-      if (!moved && Math.abs(ev.clientX - x0) < 3 && Math.abs(ev.clientY - e.clientY) < 3) return;
-      moved = true;
-      delta = (ev.clientX - x0) / this.pps;
+    // 邊拖邊套用（跟修剪一樣），放開前就看得到片段會落在哪裡、哪些片段會被往後推
+    const apply = (ev) => {
+      let delta = (ev.clientX - x0 + scroller.offset()) / this.pps;
       delta = Math.max(delta, -minStart);
       let snapped = null;
       if (this.store.snap && !ev.altKey) {
@@ -457,41 +516,34 @@ export class Timeline {
         if (r.point != null) { delta = Math.max(r.start - clip.start, -minStart); snapped = r.point; }
       }
       this.showSnap(snapped);
-      targetTrack = null;
+      let next = base;
       if (single) {
         const tr = this.trackAtClientY(ev.clientY);
-        if (tr && canHost(tr, clip.type) && !tr.locked) targetTrack = tr;
+        const target = tr && canHost(tr, clip.type) && !tr.locked ? tr : getTrack(base, clip.trackId);
+        // 放在別的片段上：插進去並把後面的往後推（波紋模式下原本的位置會補起來）
+        next = placeClip(base, clip.id, { start: clip.start + delta, trackId: target.id, closeGap: this.store.ripple });
+      } else {
+        const ordered = [...group].sort((a, b) => (delta > 0 ? b.start - a.start : a.start - b.start));
+        for (const c of ordered) next = moveClip(next, c.id, { start: c.start + delta });
       }
-      for (const c of group) {
-        const el = this.clipEls.get(c.id);
-        el.classList.add('ghost');
-        el.style.left = `${this.timeToX(c.start + delta)}px`;
-        if (single && targetTrack && targetTrack.id !== c.trackId) {
-          const from = this.rows.get(c.trackId).getBoundingClientRect().top;
-          const to = this.rows.get(targetTrack.id).getBoundingClientRect().top;
-          el.style.top = `${to - from + 4}px`;
-        } else {
-          el.style.top = '';
-        }
-      }
+      this.store.commit(next, { key: `move-${session}` });
     };
-    const up = () => {
-      window.removeEventListener('pointermove', move);
-      window.removeEventListener('pointerup', up);
-      this.showSnap(null);
-      this.drag = null;
-      for (const c of group) this.clipEls.get(c.id)?.classList.remove('ghost');
-      if (!moved) return;
-      let next = this.store.project;
-      const ordered = [...group].sort((a, b) => (delta > 0 ? b.start - a.start : a.start - b.start));
-      for (const c of ordered) {
-        next = moveClip(next, c.id, { start: c.start + delta, trackId: single && targetTrack ? targetTrack.id : c.trackId });
-      }
-      if (!this.store.commit(next)) this.render();
+    const scroller = this.autoScroll(() => { if (moved) apply(last); });
+    const move = (ev) => {
+      last = ev;
+      scroller.track(ev);
+      if (!moved && Math.abs(ev.clientX - x0) < 3 && Math.abs(ev.clientY - e.clientY) < 3) return;
+      moved = true;
+      apply(ev);
     };
     this.drag = { type: 'move' };
     window.addEventListener('pointermove', move);
-    window.addEventListener('pointerup', up);
+    this.onDragEnd(() => {
+      window.removeEventListener('pointermove', move);
+      scroller.stop();
+      this.showSnap(null);
+      this.drag = null;
+    });
   }
 
   bindDrop() {

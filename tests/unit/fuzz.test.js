@@ -83,7 +83,7 @@ function randomStep(p, r) {
   const pick = (arr) => arr[Math.floor(r() * arr.length)];
   const clip = p.clips.length ? pick(p.clips) : null;
   const t = r() * 30 - 2;
-  const op = Math.floor(r() * 14);
+  const op = Math.floor(r() * 15);
   switch (op) {
     case 0: case 1: {
       const m = pick(Object.values(p.media));
@@ -102,6 +102,7 @@ function randomStep(p, r) {
       return applyLayout(p, layoutCandidates(p, clip ? [clip.id] : [], t, 4).map(c => c.id), id).project;
     }
     case 12: return clip ? P.updateClip(p, clip.id, { frame: pick([null, { x: r() * 3 - 1, w: r() * 3 - 0.5, shape: pick(['circle', 'x', 1]) }, { border: pick([NaN, -5, 1e9, 4]) }, 'junk']) }) : p;
+    case 13: return clip ? P.placeClip(p, clip.id, { start: t, trackId: r() < 0.3 ? pick(p.tracks).id : undefined, closeGap: r() < 0.5 }) : p;
     case 10: return r() < 0.5 ? P.addTrack(p, pick(['video', 'audio'])) : P.removeTrack(p, pick(p.tracks).id);
     default: return P.updateTrack(p, pick(p.tracks).id, { locked: r() < 0.2, hidden: r() < 0.2, muted: r() < 0.2 });
   }

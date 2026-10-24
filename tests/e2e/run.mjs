@@ -1078,6 +1078,109 @@ try {
 
 
   await setLimits({ copy: 100 * 1024 * 1024 });
+  console.log('\n時間軸拖曳');
+  /** 新專案：V1 上依序是 red[0,2] blue[2,4] photo[4,9]，緊緊排在一起 */
+  async function setupPacked() {
+    await newProjectUI();
+    await page.setInputFiles('#fileInput', [fx.red, fx.blue, fx.image]);
+    await waitFor(async () => (await state()).project.clips.length === 3, 10000, '匯入三個');
+    await page.evaluate(() => { window.__oc.store.select([]); window.__oc.timeline.fit(); });
+    await page.waitForTimeout(200);
+    const p = (await state()).project;
+    const by = (n) => p.clips.find(c => p.media[c.mediaId].name === n);
+    return { red: by('red.mp4'), blue: by('blue.mp4'), photo: by('photo.png') };
+  }
+  const v1Order = async () => {
+    const p = (await state()).project;
+    const v1 = [...p.tracks].reverse().find(t => t.kind === 'video');
+    return p.clips.filter(c => c.trackId === v1.id).sort((a, b) => a.start - b.start).map(c => p.media[c.mediaId].name.split('.')[0]);
+  };
+  const timeX = (t) => page.evaluate((t) => { const tl = window.__oc.timeline; return tl.els.scroll.getBoundingClientRect().left + tl.timeToX(t) - tl.els.scroll.scrollLeft; }, t);
+
+  await test('緊密排列的片段可以拖到更早的位置（插到前面，其他往後推）', async () => {
+    const { photo } = await setupPacked();
+    const box = await clipBox(photo.id);
+    const y = box.y + box.height / 2;
+    await page.mouse.move(box.x + box.width / 2, y);
+    await page.mouse.down();
+    const dx = (await timeX(0.3)) - (await timeX(photo.start));
+    await page.mouse.move(box.x + box.width / 2 + dx / 2, y, { steps: 5 });
+    await page.mouse.move(box.x + box.width / 2 + dx, y, { steps: 5 });
+    await page.mouse.up();
+    assert.deepEqual(await v1Order(), ['photo', 'red', 'blue']);
+    const p = (await state()).project;
+    assert.equal(p.clips.find(c => c.id === photo.id).start, 0);
+    await page.keyboard.press('Control+z');
+    assert.deepEqual(await v1Order(), ['red', 'blue', 'photo'], '一次就能復原');
+  });
+
+  await test('也可以拖到更晚的位置；波紋模式會把原本的位置補起來', async () => {
+    const { red, photo } = await setupPacked();
+    await page.click('#btnRipple');
+    try {
+      const box = await clipBox(red.id);
+      const y = box.y + box.height / 2;
+      const target = await timeX(photo.start + photo.duration * 0.8); // 圖片的後半段
+      await page.mouse.move(box.x + box.width / 2, y);
+      await page.mouse.down();
+      await page.mouse.move(target, y, { steps: 10 });
+      await page.mouse.up();
+      assert.deepEqual(await v1Order(), ['blue', 'photo', 'red']);
+      assert.equal((await state()).project.clips.find(c => c.id === red.id).start, 7, '補位後接在圖片後面');
+    } finally {
+      await page.click('#btnRipple');
+    }
+  });
+
+  await test('拖到時間軸右邊緣會自動捲動，可以拖到畫面外更晚的地方', async () => {
+    const { red } = await setupPacked();
+    await page.evaluate(() => window.__oc.store.setView({ pxPerSec: 300 }));
+    await page.evaluate(() => { window.__oc.timeline.els.scroll.scrollLeft = 0; });
+    await page.waitForTimeout(100);
+    const sc = await page.locator('#tlScroll').boundingBox();
+    const box = await clipBox(red.id);
+    const y = box.y + box.height / 2;
+    await page.mouse.move(box.x + 30, y);
+    await page.mouse.down();
+    await page.mouse.move(sc.x + sc.width - 10, y, { steps: 10 });
+    await page.waitForTimeout(1500);
+    await page.mouse.up();
+    const visibleEnd = (sc.width - 16) / 300;
+    const after = (await state()).project.clips.find(c => c.id === red.id);
+    assert.ok(after.start > visibleEnd, `拖到 ${after.start}s，一開始畫面只看得到 ${visibleEnd.toFixed(1)}s`);
+    assert.ok(await page.evaluate(() => window.__oc.timeline.els.scroll.scrollLeft > 0), '有捲動');
+  });
+
+  await test('很短的片段：中間抓得到可以移動（不會變成修剪）', async () => {
+    const { blue } = await setupPacked();
+    await page.evaluate(() => window.__oc.store.setView({ pxPerSec: 6 })); // 2 秒只有 12px
+    await page.waitForTimeout(100);
+    const box = await clipBox(blue.id);
+    assert.ok(box.width < 18, `片段寬 ${box.width}`);
+    const y = box.y + box.height / 2;
+    await page.mouse.move(box.x + box.width / 2, y);
+    await page.mouse.down();
+    await page.mouse.move(box.x + box.width / 2 + 120, y, { steps: 8 });
+    await page.mouse.up();
+    const after = (await state()).project.clips.find(c => c.id === blue.id);
+    assert.ok(Math.abs(after.duration - blue.duration) < 1e-6, '長度沒變（不是修剪）');
+    assert.ok(after.start > blue.start + 5, `往後移到 ${after.start}`);
+  });
+
+  await test('修剪拉不動時會說明原因', async () => {
+    const { red } = await setupPacked();
+    await page.evaluate(() => window.__oc.store.setView({ pxPerSec: 100 }));
+    await page.waitForTimeout(100);
+    const box = await clipBox(red.id);
+    const y = box.y + box.height / 2;
+    await page.mouse.move(box.x + 2, y);
+    await page.mouse.down();
+    await page.mouse.move(box.x - 80, y, { steps: 6 });
+    await page.mouse.up();
+    await waitFor(async () => (await page.locator('.toast', { hasText: '素材的開頭' }).count()) > 0, 3000, '提示');
+    assert.equal((await state()).project.clips.find(c => c.id === red.id).start, 0);
+  });
+
   console.log('\n雙畫面版型與圖案');
   /** 紅色影片在 V1、藍色影片在上面一條軌，兩段從 0 開始重疊 */
   async function setupTwoCams() {
