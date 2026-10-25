@@ -1,6 +1,6 @@
 // 右側屬性面板：專案設定 / 片段屬性
 
-import { updateClip, renameProject, setAspect, ASPECT_PRESETS, getDuration, clipEnd, canFrame, MIN_FRAME, audioFadesOf, TEXT_DECO_IDS } from '../core/project.js';
+import { updateClip, renameProject, setAspect, ASPECT_PRESETS, getDuration, clipEnd, canFrame, MIN_FRAME, audioFadesOf, TEXT_DECO_IDS, counterTarget } from '../core/project.js';
 import { formatTimecode, formatDuration, clamp } from '../core/time.js';
 import { icon } from './icons.js';
 import { escapeHtml } from './dialogs.js';
@@ -280,6 +280,51 @@ export class Inspector {
     gw.style.cssText = 'display:flex;align-items:center;gap:10px';
     gw.append(gl, glowColor.el);
     s.appendChild(this.row(_t('發光'), gw, true));
+
+    // 數字動畫：從起始數字滾到文字裡的數字（倒數 / 跳分數）
+    const cOn = document.createElement('input');
+    cOn.type = 'checkbox';
+    cOn.onchange = () => this.commit(c => ({
+      text: { counter: cOn.checked ? { from: (counterTarget(c.text.content) ?? 0) + 20, duration: Math.max(0.5, Math.min(3, c.duration)), ease: 'out' } : null },
+    }), 'counterOn');
+    this.bind(cOn, c => { cOn.checked = !!c.text.counter; });
+    const cl = document.createElement('label');
+    cl.className = 'check';
+    cl.append(cOn, document.createTextNode(_t('數字滾動到文字裡的數字')));
+    s.appendChild(this.row(_t('數字動畫'), cl, true));
+    const fromIn = document.createElement('input');
+    fromIn.className = 'text-input';
+    fromIn.inputMode = 'decimal';
+    fromIn.setAttribute('aria-label', _t('起始數字'));
+    fromIn.addEventListener('change', () => {
+      const v = parseFloat(fromIn.value.replace(/,/g, ''));
+      if (isFinite(v)) this.commit(c => ({ text: { counter: { ...c.text.counter, from: v } } }), 'counterFrom');
+    });
+    fromIn.addEventListener('keydown', (e) => { if (e.key === 'Enter') fromIn.blur(); });
+    const fromRow = this.row(_t('起始數字'), fromIn, true);
+    this.bind(fromIn, c => { fromRow.hidden = !c.text.counter; if (c.text.counter && document.activeElement !== fromIn) fromIn.value = c.text.counter.from; });
+    s.appendChild(fromRow);
+    const durRow = this.slider(_t('動畫長度'), {
+      min: 0.5, max: (c) => Math.max(0.5, Math.min(10, c.duration)), step: 0.1, unit: 's', decimals: 1, key: 'counterDur', hardMax: 600,
+      get: c => c.text.counter?.duration ?? 3, set: (v, c) => ({ text: { counter: { ...c.text.counter, duration: v } } }),
+    });
+    this.bind(durRow, c => { durRow.hidden = !c.text.counter; });
+    s.appendChild(durRow);
+    const ease = this.seg([['out', _t('越接近越慢')], ['linear', _t('等速')]], (v) => this.commit(c => ({ text: { counter: { ...c.text.counter, ease: v } } }), 'counterEase'), c => c.text.counter?.ease);
+    const easeRow = this.row(_t('速度'), ease, true);
+    this.bind(easeRow, c => { easeRow.hidden = !c.text.counter; });
+    s.appendChild(easeRow);
+    const cHint = document.createElement('p');
+    cHint.className = 'hint-line';
+    this.bind(cHint, c => {
+      cHint.hidden = !c.text.counter;
+      if (!c.text.counter) return;
+      const target = counterTarget(c.text.content);
+      cHint.textContent = target == null
+        ? _t('文字裡要有數字，例如「2132」或「NT$ 1,200」。')
+        : _t('片段開始後 {sec} 秒內從 {from} 跑到 {to}。', { sec: c.text.counter.duration.toFixed(1), from: c.text.counter.from, to: target });
+    });
+    s.appendChild(cHint);
 
     // 外框造型（爆炸標、對話框…）：造型跟著文字大小變化
     const deco = document.createElement('select');

@@ -1,7 +1,7 @@
 // 左側面板的「版型」與「圖案」分頁
 
 import { LAYOUTS, layoutFrames, matchLayout } from '../core/layouts.js';
-import { GRAPHICS, GRAPHIC_CATEGORIES, renderGraphic, TEXT_GRAPHICS, getTextGraphic } from '../graphics.js';
+import { GRAPHICS, GRAPHIC_CATEGORIES, renderGraphic, TEXT_GRAPHICS, getTextGraphic, SOLID_COLORS } from '../graphics.js';
 import { renderTextPreview } from '../engine/renderer.js';
 import { escapeHtml } from './dialogs.js';
 import { icon } from './icons.js';
@@ -55,6 +55,10 @@ export class GraphicsPanel {
     this.store = store;
     this.el = el;
     this.key = null;
+    // 自訂顏色：選好顏色就插入
+    el.addEventListener('change', (e) => {
+      if (e.target.closest('.solid-custom') && e.target.type === 'color') onAdd(`solid-${e.target.value}`);
+    });
     el.addEventListener('click', (e) => {
       const cat = e.target.closest('[data-jump]')?.dataset.jump;
       if (cat) {
@@ -77,7 +81,10 @@ export class GraphicsPanel {
       const art = renderGraphic(g, p.width, p.height);
       return `<img alt="" draggable="false" src="data:image/svg+xml;charset=utf-8,${encodeURIComponent(art.svg)}">`;
     };
-    const items = (cat) => cat.id === 'text'
+    const solid = () => SOLID_COLORS.map(([c, label]) => `
+          <button class="graphic-opt" data-graphic="solid-${c}" title="${_t('加入「{name}」', { name: escapeHtml(label) })}"><span class="graphic-thumb solid-thumb" style="background:${c}"></span><small>${escapeHtml(label)}</small></button>`).join('')
+      + `<label class="graphic-opt solid-custom" title="${_t('選一個顏色，就會插入那個顏色的畫面')}"><span class="graphic-thumb solid-thumb"><input type="color" value="#ff5c39" aria-label="${_t('自訂顏色')}"></span><small>${_t('自訂顏色')}</small></label>`;
+    const items = (cat) => cat.id === 'solid' ? solid() : cat.id === 'text'
       ? TEXT_GRAPHICS.map(g => `
           <button class="graphic-opt" data-graphic="${g.id}" title="${_t('加入「{name}」', { name: escapeHtml(g.label) })}"><span class="graphic-thumb"><canvas width="240" height="150" data-text-thumb="${g.id}"></canvas></span><small>${escapeHtml(g.label)}</small></button>`).join('')
       : GRAPHICS.filter(g => g.category === cat.id).map(g => `

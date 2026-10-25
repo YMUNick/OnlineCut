@@ -1508,7 +1508,7 @@ try {
     const tracksBefore = (await state()).project.tracks.filter(t => t.kind === 'video').length;
     await page.evaluate(() => window.__oc.player.seek(0));
     await page.click('.tab[data-tab="graphics"]');
-    assert.equal(await page.locator('.graphic-opt').count(), 78, '23 個文字貼圖 + 55 個圖案');
+    assert.equal(await page.locator('.graphic-opt').count(), 81, '3 個純色畫面 + 23 個文字貼圖 + 55 個圖案');
     await page.click('[data-graphic="sunset"]');
     await waitFor(async () => (await state()).project.clips.length === 2, 5000, '背景');
     let s = await state();
@@ -1622,7 +1622,7 @@ try {
   await test('文字樣式：霓虹字會發光、可以關掉；圖案分頁可以直接跳到分類', async () => {
     await newProjectUI();
     await page.click('.tab[data-tab="text"]');
-    assert.equal(await page.locator('.text-preset').count(), 15);
+    assert.equal(await page.locator('.text-preset').count(), 16);
     await page.click('[data-preset="neon"]');
     await waitFor(async () => (await state()).project.clips.length === 1, 3000, '加入');
     const t = (await state()).project.clips[0].text;
@@ -1661,6 +1661,70 @@ try {
     const [r, g, b] = at.rgb(L.cx, L.cy + L.r * 0.62 * 1920 / 1080);
     assert.ok(r > 180 && g > 150 && b < 120, `星形是黃色：${[r, g, b]}`);
     assert.ok(at.rgb(0.05, 0.9).every(v => v < 30), '角落是黑色背景');
+  });
+
+  console.log('\n純色畫面與數字動畫');
+  await test('純色畫面：插在播放頭的位置（片段中間會先分割），後面的片段往後移', async () => {
+    const { blue, photo } = await setupPacked();
+    await page.evaluate(() => window.__oc.player.seek(1));
+    await page.click('.tab[data-tab="graphics"]');
+    await page.click('[data-graphic="solid-#000000"]');
+    await waitFor(async () => (await v1Order()).length === 5, 5000, '插入');
+    assert.deepEqual(await v1Order(), ['red', '純黑畫面 1920×1080', 'red', 'blue', 'photo']);
+    const p = (await state()).project;
+    const black = p.clips.find(c => c.name === '純黑畫面');
+    assert.deepEqual([black.start, black.duration], [1, 3]);
+    assert.equal(p.clips.find(c => c.id === blue.id).start, blue.start + 3, '後面的片段往後移 3 秒');
+    assert.equal(p.clips.find(c => c.id === photo.id).start, photo.start + 3);
+    assert.equal(p.clips.filter(c => p.media[c.mediaId]?.name === 'red.mp4').length, 2, '紅色片段被分成兩段');
+    // 匯出：插入的那 3 秒是全黑
+    const at = await exportedColors('solid', 2.5);
+    assert.ok(at.rgb(0.5, 0.5).every(v => v < 25), `全黑：${at.rgb(0.5, 0.5)}`);
+    await page.keyboard.press('Control+z');
+    assert.deepEqual(await v1Order(), ['red', 'blue', 'photo'], '一次就能復原');
+  });
+
+  await test('純色畫面：白色與自訂顏色；同一個顏色重複加入不會多一份素材', async () => {
+    await page.evaluate(() => window.__oc.player.seek(9));
+    await page.click('[data-graphic="solid-#ffffff"]');
+    await waitFor(async () => (await state()).project.clips.some(c => c.name === '純白畫面'), 3000, '白色');
+    await page.locator('.solid-custom input[type=color]').evaluate((el) => { el.value = '#3366ff'; el.dispatchEvent(new Event('change', { bubbles: true })); });
+    await waitFor(async () => (await state()).project.clips.some(c => c.name === '純色畫面 #3366ff'), 3000, '自訂顏色');
+    const media = Object.keys((await state()).project.media).length;
+    await page.click('[data-graphic="solid-#ffffff"]');
+    await waitFor(async () => (await state()).project.clips.filter(c => c.name === '純白畫面').length === 2, 3000, '第二個白色');
+    assert.equal(Object.keys((await state()).project.media).length, media, '重複使用素材');
+  });
+
+  await test('數字倒數：從起始數字滾到文字裡的數字，越接近越慢；可以在屬性面板調整', async () => {
+    await newProjectUI();
+    await page.evaluate(() => window.__oc.player.seek(0));
+    await page.click('.tab[data-tab="text"]');
+    await page.click('[data-preset="counter"]');
+    await waitFor(async () => (await state()).project.clips.length === 1, 3000, '加入');
+    const clip = async () => (await state()).project.clips[0];
+    assert.deepEqual((await clip()).text.counter, { from: 2152, duration: 3, ease: 'out' });
+    const shown = (t) => page.evaluate(async (t) => {
+      const P = await import('./assets/js/core/project.js');
+      return P.counterText(window.__oc.store.project.clips[0], t);
+    }, t);
+    assert.deepEqual([await shown(0), await shown(3), await shown(4)], ['2152', '2132', '2132']);
+    // 屬性面板
+    const box = page.locator('label.check', { hasText: '數字滾動到文字裡的數字' }).locator('input');
+    assert.equal(await box.isChecked(), true);
+    const from = page.locator('.field', { hasText: '起始數字' }).locator('input');
+    await from.fill('100');
+    await from.press('Enter');
+    assert.equal((await clip()).text.counter.from, 100);
+    assert.match(await page.textContent('.inspector'), /3\.0 秒內從 100 跑到 2132/);
+    await page.click('.seg-btn[data-v="linear"]');
+    assert.equal((await clip()).text.counter.ease, 'linear');
+    assert.equal(await shown(1.5), '1116', '等速：一半');
+    await box.uncheck();
+    assert.equal((await clip()).text.counter, null);
+    assert.equal(await page.locator('.field', { hasText: '起始數字' }).isVisible(), false, '關掉後隱藏設定');
+    await box.check();
+    assert.deepEqual((await clip()).text.counter, { from: 2152, duration: 3, ease: 'out' }, '重新打開：目標 + 20');
   });
 
   console.log('\n英文版');

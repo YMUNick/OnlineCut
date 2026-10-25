@@ -597,3 +597,50 @@ describe('聲音的淡入淡出（影片片段可以跟畫面分開）', () => {
     assert.equal(P.normalizeProject(raw).clips[0].audioFades, null);
   });
 });
+
+describe('數字動畫（倒數 / 數字滾動）', () => {
+  const clipWith = (content, counter, start = 10) => ({ start, duration: 5, text: { content, counter } });
+  test('開始時顯示起始數字，結束時停在文字裡的數字', () => {
+    const c = clipWith('2132', { from: 2152, duration: 3, ease: 'out' });
+    assert.equal(P.counterText(c, 10), '2152');
+    assert.equal(P.counterText(c, 13), '2132');
+    assert.equal(P.counterText(c, 14.5), '2132');
+    assert.equal(P.counterText(c, 9), '2152', '片段開始前也顯示起始數字');
+  });
+  test('越接近目標越慢；還沒結束前不會提早停在目標', () => {
+    const c = clipWith('2132', { from: 2152, duration: 3, ease: 'out' });
+    const at = (t) => Number(P.counterText(c, 10 + t));
+    let prev = Infinity;
+    for (let t = 0; t <= 3.0001; t += 0.05) { const v = at(t); assert.ok(v <= prev, `${t}s 只會往下數`); prev = v; }
+    assert.ok(at(0.3) - at(0.6) > at(2.4) - at(2.7), '前段跑得快、後段跑得慢');
+    assert.equal(at(2.99), 2133, '最後一刻之前還沒到');
+  });
+  test('等速：中間剛好一半', () => {
+    const c = clipWith('100', { from: 0, duration: 2, ease: 'linear' });
+    assert.equal(P.counterText(c, 11), '50');
+  });
+  test('保留前後文字、千分位與小數位數；也可以往上數', () => {
+    const c = clipWith('NT$ 12,500 元', { from: 0, duration: 1, ease: 'out' });
+    assert.equal(P.counterText(c, 11), 'NT$ 12,500 元');
+    assert.match(P.counterText(c, 10.5), /^NT\$ \d{1,2},\d{3} 元$/);
+    const d = clipWith('98.6%', { from: 90, duration: 1, ease: 'linear' });
+    assert.equal(P.counterText(d, 10.5), '94.3%');
+  });
+  test('文字裡沒有數字：照原樣顯示', () => {
+    assert.equal(P.counterText(clipWith('沒有數字', { from: 5, duration: 1, ease: 'out' }), 10.5), '沒有數字');
+    assert.equal(P.counterTarget('第 3 名'), 3);
+    assert.equal(P.counterTarget('abc'), null);
+  });
+  test('存檔：檢查數值範圍；沒設定起始數字時用目標 + 20', () => {
+    let p = P.createProject();
+    const r = P.addClip(p, 'text', { text: { content: '2132', counter: { from: 2152, duration: 3, ease: 'out' } } });
+    assert.deepEqual(P.normalizeProject(JSON.parse(JSON.stringify(r.project))), r.project);
+    const raw = JSON.parse(JSON.stringify(r.project));
+    raw.clips[0].text.counter = { duration: -5, ease: 'bounce' };
+    assert.deepEqual(P.normalizeProject(raw).clips[0].text.counter, { from: 2152, duration: 0.1, ease: 'out' });
+    raw.clips[0].text.counter = 'junk';
+    assert.equal(P.normalizeProject(raw).clips[0].text.counter, null);
+    const u = P.updateClip(r.project, r.clip.id, { text: { counter: { from: NaN, duration: 1e9 } } });
+    assert.deepEqual(u.clips[0].text.counter, { from: 2152, duration: 600, ease: 'out' });
+  });
+});

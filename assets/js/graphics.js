@@ -4,6 +4,7 @@ import { _t } from './i18n.js';
 // 背景與邊框依專案解析度產生；貼圖固定 512×512、背景透明。
 
 export const GRAPHIC_CATEGORIES = [
+  { id: 'solid', label: _t('純色畫面'), hint: _t('插在播放頭的位置，後面的片段往後移') },
   { id: 'text', label: _t('文字貼圖'), hint: _t('可以改字：在預覽上點兩下') },
   { id: 'bg', label: _t('背景') },
   { id: 'sticker', label: _t('貼圖') },
@@ -662,4 +663,18 @@ export const TEXT_GRAPHICS = [
 
 export function getTextGraphic(id) {
   return TEXT_GRAPHICS.find(g => g.id === id) ?? null;
+}
+
+// ============================================================
+// 純色畫面（黑、白或自訂顏色）：跟畫面一樣大的單色圖片
+// ============================================================
+export const SOLID_COLORS = [['#000000', _t('純黑畫面')], ['#ffffff', _t('純白畫面')]];
+
+export function solidGraphic(color) {
+  const known = SOLID_COLORS.find(([c]) => c === color);
+  return {
+    id: `solid-${color}`, category: 'solid',
+    label: known ? known[1] : _t('純色畫面 {color}', { color }),
+    draw: (W, H) => `<rect width="${W}" height="${H}" fill="${color}"/>`,
+  };
 }

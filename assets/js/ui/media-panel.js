@@ -25,6 +25,7 @@ export const TEXT_PRESETS = [
   { id: 'bignews', label: _t('英文大標'), sample: 'BIG NEWS', text: { fontSize: 200, fontWeight: 400, fontFamily: 'Bebas Neue', color: '#ffffff', shadow: true } },
   { id: 'script', label: _t('草寫標題'), sample: 'Summer Vibes', text: { fontSize: 110, fontWeight: 400, fontFamily: 'Pacifico', color: '#ffffff', shadow: true } },
   { id: 'marker', label: _t('麥克筆字'), sample: 'Wait for it…', text: { fontSize: 96, fontWeight: 400, fontFamily: 'Permanent Marker', color: '#ffd23f', shadow: true } },
+  { id: 'counter', label: _t('數字倒數'), sample: '2132', text: { fontSize: 220, fontWeight: 900, fontFamily: 'Bebas Neue', color: '#ffffff', shadow: true, counter: { from: 2152, duration: 3, ease: 'out' } } },
   { id: 'typewriter', label: _t('打字機'), sample: 'Hello, world.', text: { fontSize: 56, fontWeight: 400, fontFamily: 'ui-monospace', color: '#d9ffe0', background: 'rgba(0,0,0,0.75)', shadow: false } },
 ];
 

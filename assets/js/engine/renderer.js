@@ -1,7 +1,7 @@
 // 畫面合成：把某個時間點的所有片段畫到 canvas 上。預覽與匯出共用。
 // 座標一律以「專案解析度」的像素計算；canvas 比較小時會整體縮放。
 
-import { activeClipsAt, clipOpacityAt } from '../core/project.js';
+import { activeClipsAt, clipOpacityAt, counterText } from '../core/project.js';
 import { TEXT_DECOS } from './text-deco.js';
 
 export const TEXT_LINE_HEIGHT = 1.25;
@@ -33,7 +33,12 @@ export function textOuter(t, box) {
  * 影像預設「完整放進畫面」(contain)，scale = 1 時剛好塞滿其中一邊。
  * measureText(font, line) 用來量文字寬度。
  */
-export function clipLayout(project, clip, mediaInfo, measureText) {
+/** 片段在時間 t 顯示的文字設定（數字動畫會換掉內容裡的數字） */
+export function shownText(clip, time) {
+  return clip.text.counter && time != null ? { ...clip.text, content: counterText(clip, time) } : clip.text;
+}
+
+export function clipLayout(project, clip, mediaInfo, measureText, time = null) {
   const W = project.width, H = project.height;
   const { x, y, scale, rotation } = clip.transform;
   if (clip.frame && clip.type !== 'text') {
@@ -43,8 +48,9 @@ export function clipLayout(project, clip, mediaInfo, measureText) {
   }
   let w, h;
   if (clip.type === 'text') {
-    const box = textBox(clip.text, measureText);
-    const outer = textOuter(clip.text, box);
+    const text = shownText(clip, time);
+    const box = textBox(text, measureText);
+    const outer = textOuter(text, box);
     // text：文字框本身的位置（雙擊編輯時用來對齊輸入框）
     return {
       cx: W / 2 + x, cy: H / 2 + y, w: outer.w * scale, h: outer.h * scale, rotation,
@@ -144,7 +150,7 @@ export function drawFrame(ctx, project, t, { getSource, getMediaInfo, hideTextFo
   for (const clip of activeClipsAt(project, t)) {
     if (clip.type === 'audio') continue;
     const alpha = clipOpacityAt(clip, t);
-    const layout = clipLayout(project, clip, getMediaInfo(clip), measure);
+    const layout = clipLayout(project, clip, getMediaInfo(clip), measure, t);
     layouts.set(clip.id, layout);
     if (alpha <= 0) continue;
 
@@ -156,7 +162,7 @@ export function drawFrame(ctx, project, t, { getSource, getMediaInfo, hideTextFo
     if (layout.rotation) ctx.rotate((layout.rotation * Math.PI) / 180);
 
     if (clip.type === 'text') {
-      drawText(ctx, clip, layout, measure, clip.id === hideTextFor);
+      drawText(ctx, clip.text.counter ? { ...clip, text: shownText(clip, t) } : clip, layout, measure, clip.id === hideTextFor);
     } else if (layout.framed) {
       ctx.filter = 'none';
       drawFramed(ctx, clip, layout, getSource(clip), getMediaInfo(clip), filter, k);

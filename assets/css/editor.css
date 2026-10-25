@@ -212,6 +212,11 @@ html[lang="en"] .tab .icon { display: none; }
 .graphic-grid.text { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 .graphic-grid.text .graphic-thumb { aspect-ratio: 8 / 5; background: linear-gradient(160deg, #6a7c93, #2c3644 70%); }
 .graphic-thumb canvas { width: 100%; height: 100%; display: block; }
+.graphic-grid.solid { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+.solid-thumb { aspect-ratio: var(--ratio, 16/9); border: 1px solid var(--line-2); }
+.solid-custom { cursor: pointer; }
+.solid-custom .solid-thumb { background: conic-gradient(#ff5c39, #ffd23f, #3ddc97, #4cc9f0, #7b5cff, #f72585, #ff5c39); position: relative; }
+.solid-custom input[type=color] { position: absolute; inset: 0; width: 100%; height: 100%; opacity: 0; cursor: pointer; border: 0; padding: 0; }
 .panel-sub-hint { display: block; margin-top: 3px; font-weight: 500; letter-spacing: 0; color: var(--accent); }
 .layout-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; --lay-bg: #24272d; --lay-main: #4a5160; --lay-sub: var(--accent); --lay-line: #fff; }
 .layout-opt { padding: 10px 6px 8px; }

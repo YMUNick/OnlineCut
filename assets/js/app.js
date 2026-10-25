@@ -3,10 +3,10 @@
 import {
   createProject, normalizeProject, addMedia, removeMedia, addClip, deleteClips, splitAtPlayhead,
   duplicateClip, getDuration, setAspect, ASPECT_PRESETS, addTrack, renameProject, DEFAULT_TEXT_DURATION,
-  DEFAULT_IMAGE_DURATION, getClip, getTrack,
+  DEFAULT_IMAGE_DURATION, getClip, getTrack, splitClip, placeClip,
 } from './core/project.js';
 import { LAYOUTS, layoutFrames, layoutCandidates, applyLayout } from './core/layouts.js';
-import { getGraphic, renderGraphic, getTextGraphic } from './graphics.js';
+import { getGraphic, renderGraphic, getTextGraphic, solidGraphic } from './graphics.js';
 import { textBox, textOuter, clearTextMeasureCache } from './engine/renderer.js';
 import { ensureProjectFonts } from './ui/fonts.js';
 import { LayoutPanel, GraphicsPanel } from './ui/extras-panel.js';
@@ -468,29 +468,62 @@ function applyLayoutAction(id) {
 }
 
 /** 加入內建圖案：背景放最下面，貼圖和邊框放最上面 */
+/**
+ * 圖案用的素材：同一個圖案（同尺寸）已經在專案裡就重複使用，不然產生 SVG 檔加進專案。
+ * 回傳 { info, project }（project 可能多了這個素材，還沒 commit）；失敗回傳 null
+ */
+async function graphicMedia(g) {
+  const art = renderGraphic(g, store.project.width, store.project.height);
+  const info = Object.values(store.project.media).find(m => m.type === 'image' && m.name === art.name && m.width === art.width && m.height === art.height && runtime.has(m.id));
+  if (info) return { info, project: store.project };
+  const file = new File([art.svg], art.name, { type: 'image/svg+xml' });
+  try {
+    const r = await probe(file);
+    await runtime.register(r.info, file, r.url);
+    persistMedia(r.info.id, file, null);
+    return { info: r.info, project: addMedia(store.project, r.info) };
+  } catch (e) {
+    toast(_t('無法加入圖案：{reason}', { reason: e.message }), { type: 'error' });
+    return null;
+  }
+}
+
+/**
+ * 純色畫面（黑、白或自訂顏色）：插在主影像軌的播放頭位置，後面的片段往後移。
+ * 播放頭在片段中間時先分割，讓畫面剛好插在播放頭的位置。
+ */
+const SOLID_DURATION = 3;
+async function addSolidPage(color) {
+  const g = solidGraphic(color);
+  const t = player.time;
+  const res = await graphicMedia(g);
+  if (!res) return;
+  let p = res.project;
+  const main = [...p.tracks].reverse().find(tr => tr.kind === 'video' && !tr.locked);
+  if (!main) { toast(_t('影像軌都鎖定了，先解鎖一條再加入')); return; }
+  const inside = p.clips.find(c => c.trackId === main.id && t > c.start + 1e-6 && t < c.start + c.duration - 1e-6);
+  if (inside) p = splitClip(p, inside.id, t).project;
+  const before = p;
+  const added = addClip(p, 'image', { mediaId: res.info.id, trackId: main.id, start: t, duration: SOLID_DURATION, name: g.label });
+  p = placeClip(added.project, added.clip.id, { start: t, trackId: main.id });
+  const pushed = p.clips.some(c => c.id !== added.clip.id && getClip(before, c.id) && getClip(before, c.id).start !== c.start);
+  store.commit(p, { select: [added.clip.id] });
+  toast(pushed
+    ? _t('已在播放頭插入 {sec} 秒的「{name}」，後面的片段往後移', { sec: SOLID_DURATION, name: g.label })
+    : _t('已加入 {sec} 秒的「{name}」', { sec: SOLID_DURATION, name: g.label }), { action: { label: _t('復原'), run: () => store.undo() } });
+}
+
 async function addGraphic(id) {
   const tg = getTextGraphic(id);
   if (tg) { addTextGraphic(tg); return; }
+  if (/^solid-#[0-9a-f]{6}$/i.test(id)) { addSolidPage(id.slice(6).toLowerCase()); return; }
   const g = getGraphic(id);
   if (!g) return;
   const t = player.time;
-  let p = store.project;
-  const art = renderGraphic(g, p.width, p.height);
-  // 同一個圖案（同尺寸）已經在專案裡就重複使用
-  let info = Object.values(p.media).find(m => m.type === 'image' && m.name === art.name && m.width === art.width && m.height === art.height && runtime.has(m.id));
-  if (!info) {
-    const file = new File([art.svg], art.name, { type: 'image/svg+xml' });
-    try {
-      const r = await probe(file);
-      await runtime.register(r.info, file, r.url);
-      info = r.info;
-      persistMedia(info.id, file, null);
-    } catch (e) {
-      toast(_t('無法加入圖案：{reason}', { reason: e.message }), { type: 'error' });
-      return;
-    }
-    p = addMedia(store.project, info);
-  }
+  const res = await graphicMedia(g);
+  if (!res) return;
+  let p = res.project;
+  const info = res.info;
   const W = p.width, H = p.height, short = Math.min(W, H);
   // 背景與邊框蓋住播放頭之後的整段影片（至少預設長度）
   const rest = getDuration(p) - t;

@@ -215,6 +215,27 @@ export default {
   '麥克筆字': 'Marker pen',
   '黑板': 'Chalkboard',
 
+  // ---------- 純色畫面、數字動畫 ----------
+  '動畫長度': 'Duration',
+  '已加入 {sec} 秒的「{name}」': 'Added a {sec}-second “{name}”',
+  '已在播放頭插入 {sec} 秒的「{name}」，後面的片段往後移': 'Inserted a {sec}-second “{name}” at the playhead; later clips moved back',
+  '影像軌都鎖定了，先解鎖一條再加入': 'All video tracks are locked. Unlock one first.',
+  '插在播放頭的位置，後面的片段往後移': 'Inserted at the playhead; later clips move back',
+  '數字倒數': 'Number countdown',
+  '數字動畫': 'Counter',
+  '數字滾動到文字裡的數字': 'Roll to the number in the text',
+  '文字裡要有數字，例如「2132」或「NT$ 1,200」。': 'The text needs a number, like “2132” or “$1,200”.',
+  '片段開始後 {sec} 秒內從 {from} 跑到 {to}。': 'Rolls from {from} to {to} in the first {sec} s of the clip.',
+  '等速': 'Steady',
+  '越接近越慢': 'Slow down at the end',
+  '純白畫面': 'White screen',
+  '純黑畫面': 'Black screen',
+  '純色畫面': 'Solid color',
+  '純色畫面 {color}': 'Solid color {color}',
+  '自訂顏色': 'Custom color',
+  '起始數字': 'Start from',
+  '選一個顏色，就會插入那個顏色的畫面': 'Pick a color to insert a screen of that color',
+
   // ---------- core ----------
   '子母畫面・右下': 'PiP · bottom right',
   '子母畫面・左下': 'PiP · bottom left',

@@ -81,6 +81,56 @@ export function defaultText() {
     decoColor: '#ffd23f',
     decoColor2: '#1b1440',
     glow: '',               // 發光顏色（霓虹字），'' 表示不發光
+    counter: null,          // 數字動畫：{ from, duration, ease }，見 counterText()
+  };
+}
+
+// ============================================================
+// 數字動畫（倒數 / 數字滾動）
+// ============================================================
+// 文字裡的第一個數字是「最後停下來的數字」；片段開始時顯示 from，
+// 在 duration 秒內滾到目標。ease = 'out' 時越接近目標越慢，'linear' 等速。
+export const COUNTER_EASES = ['out', 'linear'];
+const NUMBER_RE = /-?\d[\d,]*(?:\.\d+)?/;
+
+/** 文字裡的目標數字；沒有數字回傳 null */
+export function counterTarget(content) {
+  const m = String(content ?? '').match(NUMBER_RE);
+  if (!m) return null;
+  const v = parseFloat(m[0].replace(/,/g, ''));
+  return isFinite(v) ? v : null;
+}
+
+/** 片段在時間 t 要顯示的文字 */
+export function counterText(clip, t) {
+  const c = clip.text?.counter;
+  const content = String(clip.text?.content ?? '');
+  if (!c) return content;
+  const m = content.match(NUMBER_RE);
+  if (!m) return content;
+  const target = parseFloat(m[0].replace(/,/g, ''));
+  if (!isFinite(target)) return content;
+  const decimals = (m[0].split('.')[1] || '').length;
+  const p = clamp((t - clip.start) / c.duration, 0, 1);
+  const k = c.ease === 'linear' ? p : 1 - Math.pow(1 - p, 4);
+  let v = c.from + (target - c.from) * k;
+  // 還沒到終點之前不要因為四捨五入提早顯示目標
+  const unit = Math.pow(10, -decimals);
+  if (p < 1 && Math.abs(target - v) < unit) v = target + Math.sign(c.from - target) * unit;
+  if (p >= 1) v = target;
+  let str = Math.abs(v).toFixed(decimals);
+  if (m[0].includes(',')) str = str.replace(/^(\d+)/, d => d.replace(/\B(?=(\d{3})+(?!\d))/g, ','));
+  if (v < 0 && Number(str.replace(/,/g, '')) !== 0) str = '-' + str;
+  return content.slice(0, m.index) + str + content.slice(m.index + m[0].length);
+}
+
+function cleanCounter(c, fallbackFrom) {
+  if (!c || typeof c !== 'object' || Array.isArray(c)) return null;
+  const n = (v, d) => (typeof v === 'number' && isFinite(v) ? v : d);
+  return {
+    from: clamp(n(c.from, fallbackFrom ?? 0), -1e12, 1e12),
+    duration: clamp(n(c.duration, 3), 0.1, 600),
+    ease: COUNTER_EASES.includes(c.ease) ? c.ease : 'out',
   };
 }
 
@@ -534,6 +584,7 @@ export function updateClip(project, id, patch) {
     if (filters) Object.assign(c.filters, filters);
     if (text && c.text) Object.assign(c.text, text);
     if (c.text && c.text.deco !== '' && !TEXT_DECO_IDS.includes(c.text.deco)) c.text.deco = '';
+    if (c.text) c.text.counter = cleanCounter(c.text.counter, (counterTarget(c.text.content) ?? 0) + 20);
 
     c.opacity = clamp(Number(c.opacity) || 0, 0, 1);
     c.volume = clamp(Number(c.volume) || 0, 0, 2);
@@ -682,6 +733,7 @@ function sanitizeClip(c) {
     m.text.align = ['left', 'center', 'right'].includes(src.align) ? src.align : d.align;
     m.text.italic = src.italic === true;
     m.text.deco = TEXT_DECO_IDS.includes(src.deco) ? src.deco : '';
+    m.text.counter = cleanCounter(src.counter, (counterTarget(m.text.content) ?? 0) + 20);
     m.text.shadow = src.shadow === undefined ? d.shadow : src.shadow === true;
   }
   return m;
