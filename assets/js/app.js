@@ -3,13 +3,15 @@
 import {
   createProject, normalizeProject, addMedia, removeMedia, addClip, deleteClips, splitAtPlayhead,
   duplicateClip, getDuration, setAspect, ASPECT_PRESETS, addTrack, renameProject, DEFAULT_TEXT_DURATION,
-  DEFAULT_IMAGE_DURATION, getClip, getTrack, splitClip, placeClip,
+  DEFAULT_IMAGE_DURATION, getClip, getTrack, splitClip, placeClip, updateClip,
 } from './core/project.js';
+import { prevAdjacent, nextAdjacent, canTransition } from './core/transitions.js';
 import { LAYOUTS, layoutFrames, layoutCandidates, applyLayout } from './core/layouts.js';
 import { getGraphic, renderGraphic, getTextGraphic, solidGraphic } from './graphics.js';
 import { textBox, textOuter, clearTextMeasureCache } from './engine/renderer.js';
 import { ensureProjectFonts } from './ui/fonts.js';
 import { LayoutPanel, GraphicsPanel } from './ui/extras-panel.js';
+import { TransitionsPanel, TRANSITION_LABELS } from './ui/transitions-panel.js';
 import { formatTimecode, clamp } from './core/time.js';
 import { Store } from './state.js';
 import { store as db, storageSettings } from './media/store.js';
@@ -103,6 +105,14 @@ const mediaPanel = new MediaPanel({
 const layoutPanel = new LayoutPanel({ store, el: $('layoutPanel'), onApply: (id) => applyLayoutAction(id) });
 const graphicsPanel = new GraphicsPanel({ store, el: $('graphicsPanel'), onAdd: (id) => addGraphic(id) });
 document.querySelector('.tab[data-tab="graphics"]').addEventListener('click', () => graphicsPanel.render());
+const transitionsPanel = new TransitionsPanel({
+  store, el: $('transitionsPanel'),
+  getTarget: () => transitionTarget(),
+  onApply: (type, duration) => applyTransition(type, duration),
+  onApplyAll: (type, duration) => applyTransitionToAll(type, duration),
+  onRemove: () => removeTransition(),
+});
+document.querySelector('.tab[data-tab="transitions"]').addEventListener('click', () => transitionsPanel.render());
 
 const inspector = new Inspector({
   store, runtime,
@@ -122,6 +132,7 @@ window.__oc = {
   importEntries: (e) => importEntries(e),
   addGraphic: (id) => addGraphic(id),
   applyLayout: (id) => applyLayoutAction(id),
+  applyTransition: (type, duration) => applyTransition(type, duration),
   /** 模擬關掉再開啟：放掉所有素材，從瀏覽器儲存重新載入 */
   simulateRestart: async () => { player.destroy(); runtime.releaseAll(); pendingHandles.length = 0; await loadSaved(); },
 };
@@ -144,6 +155,7 @@ store.on('change', ({ type }) => {
   inspector.update(type === 'replace');
   layoutPanel.render();
   graphicsPanel.render();
+  transitionsPanel.render();
   if (p.aspect !== lastAspect || type === 'replace') { lastAspect = p.aspect; preview.layout(); }
   preview.drawOverlay();
   if (document.activeElement !== $('projectName')) $('projectName').value = p.name;
@@ -467,6 +479,56 @@ function applyLayoutAction(id) {
   toast(msg, { type: 'success', action: { label: _t('復原'), run: () => store.undo() } });
 }
 
+// ============================================================
+// 轉場
+// ============================================================
+
+/** 所有可以加轉場的接點（記在接點後面那段） */
+function transitionCuts(p) {
+  return p.clips.filter(c => !getTrack(p, c.trackId)?.locked && prevAdjacent(p, c));
+}
+
+/** 要加轉場的接點：選取的片段前面的接點（沒有就後面的），沒選取時用離播放頭最近的接點 */
+function transitionTarget() {
+  const p = store.project;
+  const sel = store.selection.length === 1 ? getClip(p, store.selection[0]) : null;
+  if (sel && canTransition(sel) && !getTrack(p, sel.trackId)?.locked) {
+    if (prevAdjacent(p, sel)) return sel;
+    return nextAdjacent(p, sel);
+  }
+  const cuts = transitionCuts(p);
+  if (!cuts.length) return null;
+  const t = player.time;
+  return cuts.reduce((best, c) => (Math.abs(c.start - t) < Math.abs(best.start - t) ? c : best));
+}
+
+const NO_CUT_HINT = () => _t('轉場需要接點：把兩段影片或圖片放在同一條軌上、首尾相接（中間不留空隙），再點一次。');
+const undoAction = () => ({ action: { label: _t('復原'), run: () => store.undo() } });
+
+function applyTransition(type, duration) {
+  const p = store.project;
+  const target = transitionTarget();
+  if (!target) { toast(NO_CUT_HINT(), { timeout: 8000 }); return; }
+  store.commit(updateClip(p, target.id, { transitionIn: { type, duration } }), { select: [target.id] });
+  seekAndReveal(target.start);
+  toast(_t('已在 {time} 的接點加上「{name}」', { time: formatTimecode(target.start, p.fps), name: TRANSITION_LABELS[type] }), { type: 'success', ...undoAction() });
+}
+
+function applyTransitionToAll(type, duration) {
+  const p = store.project;
+  const cuts = transitionCuts(p);
+  if (!cuts.length) { toast(NO_CUT_HINT(), { timeout: 8000 }); return; }
+  store.commit(cuts.reduce((q, c) => updateClip(q, c.id, { transitionIn: { type, duration } }), p));
+  toast(_t('已在 {n} 個接點加上「{name}」', { n: cuts.length, name: TRANSITION_LABELS[type] }), { type: 'success', ...undoAction() });
+}
+
+function removeTransition() {
+  const target = transitionTarget();
+  if (!target?.transitionIn) { toast(_t('這個接點沒有轉場')); return; }
+  store.commit(updateClip(store.project, target.id, { transitionIn: null }));
+  toast(_t('已移除轉場'), undoAction());
+}
+
 /** 加入內建圖案：背景放最下面，貼圖和邊框放最上面 */
 /**
  * 圖案用的素材：同一個圖案（同尺寸）已經在專案裡就重複使用，不然產生 SVG 檔加進專案。
@@ -740,7 +802,7 @@ async function loadSample() {
     const v1 = [...p.tracks].reverse().find(tr => tr.kind === 'video');
     const v2 = p.tracks.find(tr => tr.kind === 'video' && tr.id !== v1.id) ?? v1;
     infos.filter(i => i.type === 'image').forEach((info, i) => {
-      p = addClip(p, 'image', { mediaId: info.id, trackId: v1.id, start: base + i * 4, duration: 4, fadeIn: i === 0 ? 0.8 : 0, fadeOut: i === 2 ? 1 : 0, name: info.name, transform: { scale: 1.06 } }).project;
+      p = addClip(p, 'image', { mediaId: info.id, trackId: v1.id, start: base + i * 4, duration: 4, fadeIn: i === 0 ? 0.8 : 0, fadeOut: i === 2 ? 1 : 0, transitionIn: [null, { type: 'fade', duration: 1 }, { type: 'softwipe', duration: 1 }][i], name: info.name, transform: { scale: 1.06 } }).project;
     });
     const musicInfo = infos.find(i => i.type === 'audio');
     p = addClip(p, 'audio', { mediaId: musicInfo.id, start: base, duration: 12, fadeOut: 2, volume: 0.8, name: musicInfo.name }).project;

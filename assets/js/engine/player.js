@@ -1,7 +1,8 @@
 // 播放引擎：以系統時鐘推進時間軸，讓每個片段專屬的 <video>/<audio> 跟著同步，
 // 聲音經過 WebAudio（可以放大到 200%、做淡入淡出），畫面畫到預覽 canvas。
 
-import { activeClipsAt, clipGainAt, sourceTime, getDuration, clipEnd } from '../core/project.js';
+import { clipGainAt, sourceTime, getDuration, clipEnd } from '../core/project.js';
+import { visualClipsAt, visualRange, visualSourceTime } from '../core/transitions.js';
 import { clamp } from '../core/time.js';
 import { drawFrame } from './renderer.js';
 
@@ -177,16 +178,22 @@ export class Player {
     const p = this.getProject();
     const t = this.time;
     const active = new Set();
-    for (const clip of activeClipsAt(p, t, { includeHidden: true })) {
+    // 轉場時前後兩段都要有畫面：多出來的部分不出聲，素材不夠時停在第一格 / 最後一格
+    for (const clip of visualClipsAt(p, t, { includeHidden: true })) {
       if (clip.type !== 'video' && clip.type !== 'audio') continue;
       const rec = this.element(clip);
       if (!rec) continue;
       active.add(clip.id);
       const el = rec.el;
-      const target = sourceTime(clip, t);
+      const inRange = t >= clip.start && t < clipEnd(clip);
+      const target = visualSourceTime(p, clip, t);
+      const frozen = Math.abs(target - sourceTime(clip, t)) > 1e-3;
       if (el.playbackRate !== clip.speed) el.playbackRate = clip.speed;
-      this.setGain(rec, clipGainAt(p, clip, t));
-      if (this.playing) {
+      this.setGain(rec, inRange ? clipGainAt(p, clip, t) : 0);
+      if (frozen) {
+        if (!el.paused) el.pause();
+        if (Math.abs(el.currentTime - target) > 0.5 / p.fps) el.currentTime = target;
+      } else if (this.playing) {
         if (force || el.paused || Math.abs(el.currentTime - target) > DRIFT_TOLERANCE) {
           if (Math.abs(el.currentTime - target) > 0.05) el.currentTime = target;
         }
@@ -204,9 +211,11 @@ export class Player {
     }
     for (const clip of p.clips) {
       if ((clip.type !== 'video' && clip.type !== 'audio') || active.has(clip.id)) continue;
-      if (clip.start > t && clip.start - t < PRELOAD_AHEAD) {
+      const [vs] = visualRange(p, clip);
+      if (vs > t && vs - t < PRELOAD_AHEAD) {
         const rec = this.element(clip);
-        if (rec && rec.el.paused && Math.abs(rec.el.currentTime - clip.srcIn) > 0.1) rec.el.currentTime = clip.srcIn;
+        const at = visualSourceTime(p, clip, vs);
+        if (rec && rec.el.paused && Math.abs(rec.el.currentTime - at) > 0.1) rec.el.currentTime = at;
       }
     }
   }
@@ -223,7 +232,7 @@ export class Player {
 
   /** 畫面上有影片正在跳到新的位置（這時畫不出東西） */
   seekingVideo(p) {
-    return activeClipsAt(p, this.time).some(c => {
+    return visualClipsAt(p, this.time).some(c => {
       const el = c.type === 'video' && this.elements.get(c.id)?.el;
       return el && el.seeking && el.readyState < 2;
     });

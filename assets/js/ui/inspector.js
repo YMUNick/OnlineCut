@@ -7,6 +7,8 @@ import { escapeHtml } from './dialogs.js';
 import { formatBytes } from './media-panel.js';
 import { _t } from '../i18n.js';
 import { FONTS, ensureFont } from './fonts.js';
+import { TRANSITION_TYPES, DEFAULT_TRANSITION, MIN_TRANSITION, MAX_TRANSITION, prevAdjacent, effectiveTransition } from '../core/transitions.js';
+import { TRANSITION_LABELS } from './transitions-panel.js';
 
 const TYPE_LABEL = { video: _t('影片片段'), image: _t('圖片片段'), text: _t('文字片段'), audio: _t('音訊片段') };
 export const DECO_LABELS = {
@@ -113,6 +115,7 @@ export class Inspector {
     if (clip.frame) this.buildFrame();
     else if (clip.type !== 'audio') this.buildTransform();
     this.buildAppearance(clip);
+    if (clip.type === 'video' || clip.type === 'image') this.buildTransition();
     if (clip.type === 'video' || clip.type === 'image') this.buildFilters();
     if (clip.type === 'video' || clip.type === 'audio') this.buildAudio(clip);
     this.refresh();
@@ -459,6 +462,32 @@ export class Inspector {
     s.appendChild(this.slider(_t('聲音淡入'), { min: 0, max: maxFade, step: 0.1, unit: 's', decimals: 1, get: c => audioFadesOf(c).in, set: v => ({ audioFades: { in: v } }), key: 'afIn', hardMax: 600 }));
     s.appendChild(this.slider(_t('聲音淡出'), { min: 0, max: maxFade, step: 0.1, unit: 's', decimals: 1, get: c => audioFadesOf(c).out, set: v => ({ audioFades: { out: v } }), key: 'afOut', hardMax: 600 }));
     s.insertAdjacentHTML('beforeend', `<p class="hint-line" style="margin-top:0">${_t('拖曳時間軸波形上的小圓點也可以調整。只調聲音時，畫面不會跟著淡出。')}</p>`);
+  }
+
+  /** 跟前一段之間的轉場（記在後面那段） */
+  buildTransition() {
+    const s = this.section(_t('轉場'));
+    const sel = document.createElement('select');
+    sel.className = 'select';
+    sel.setAttribute('aria-label', _t('轉場效果'));
+    sel.innerHTML = `<option value="">${_t('無')}</option>` + TRANSITION_TYPES.map(id => `<option value="${id}">${TRANSITION_LABELS[id]}</option>`).join('');
+    sel.onchange = () => this.commit(() => ({ transitionIn: sel.value ? { type: sel.value } : null }), 'trType');
+    this.bind(sel, c => { sel.value = c.transitionIn?.type ?? ''; });
+    s.appendChild(this.row(_t('進場'), sel));
+    s.appendChild(this.slider(_t('長度'), {
+      min: MIN_TRANSITION, max: MAX_TRANSITION, step: 0.1, unit: 's', decimals: 1, reset: DEFAULT_TRANSITION,
+      get: c => c.transitionIn?.duration ?? DEFAULT_TRANSITION, set: v => ({ transitionIn: { duration: v } }), key: 'trDur',
+      disabled: c => !c.transitionIn,
+    }));
+    const hint = document.createElement('p');
+    hint.className = 'hint-line';
+    this.bind(hint, (c, p) => {
+      const tr = effectiveTransition(p, c);
+      if (!prevAdjacent(p, c)) hint.textContent = _t('前面要緊接著同一條軌上的另一段影片或圖片（中間不留空隙），轉場才會出現。');
+      else if (tr && tr.duration < c.transitionIn.duration - 1e-6) hint.textContent = _t('片段比較短，轉場實際只有 {s} 秒。', { s: tr.duration.toFixed(1) });
+      else hint.textContent = _t('跟前一段的接點：兩段會在接點前後重疊播放。');
+    });
+    s.appendChild(hint);
   }
 
   buildFilters() {

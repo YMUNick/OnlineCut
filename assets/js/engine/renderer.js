@@ -1,7 +1,8 @@
 // 畫面合成：把某個時間點的所有片段畫到 canvas 上。預覽與匯出共用。
 // 座標一律以「專案解析度」的像素計算；canvas 比較小時會整體縮放。
 
-import { activeClipsAt, clipOpacityAt, counterText } from '../core/project.js';
+import { clipOpacityAt, counterText } from '../core/project.js';
+import { visualClipsAt, effectiveTransition, transitionProgress, visualTime, canTransition } from '../core/transitions.js';
 import { TEXT_DECOS } from './text-deco.js';
 
 export const TEXT_LINE_HEIGHT = 1.25;
@@ -147,32 +148,193 @@ export function drawFrame(ctx, project, t, { getSource, getMediaInfo, hideTextFo
   ctx.imageSmoothingQuality = 'high';
 
   const layouts = new Map();
-  for (const clip of activeClipsAt(project, t)) {
-    if (clip.type === 'audio') continue;
-    const alpha = clipOpacityAt(clip, t);
-    const layout = clipLayout(project, clip, getMediaInfo(clip), measure, t);
-    layouts.set(clip.id, layout);
-    if (alpha <= 0) continue;
-
-    ctx.save();
-    ctx.globalAlpha = alpha;
-    const filter = filterString(clip.filters, k);
-    if (filter !== 'none') ctx.filter = filter;
-    ctx.translate(layout.cx, layout.cy);
-    if (layout.rotation) ctx.rotate((layout.rotation * Math.PI) / 180);
-
-    if (clip.type === 'text') {
-      drawText(ctx, clip.text.counter ? { ...clip, text: shownText(clip, t) } : clip, layout, measure, clip.id === hideTextFor);
-    } else if (layout.framed) {
-      ctx.filter = 'none';
-      drawFramed(ctx, clip, layout, getSource(clip), getMediaInfo(clip), filter, k);
-    } else {
-      drawSource(ctx, getSource(clip), -layout.w / 2, -layout.h / 2, layout.w, layout.h);
-    }
-    ctx.restore();
+  const env = { project, t, k, measure, getSource, getMediaInfo, hideTextFor, layouts };
+  const clips = visualClipsAt(project, t).filter(c => c.type !== 'audio');
+  // 轉場中的兩段：前一段跳過，輪到後一段時一起合成
+  const pairs = new Map();
+  const skip = new Set();
+  for (const c of clips) {
+    const tr = effectiveTransition(project, c);
+    const p = transitionProgress(tr, t);
+    if (p === null || !clips.includes(tr.from)) continue;
+    pairs.set(c.id, { tr, p });
+    skip.add(tr.from.id);
+  }
+  for (const clip of clips) {
+    if (skip.has(clip.id)) continue;
+    const pair = pairs.get(clip.id);
+    if (pair) drawTransition(ctx, env, pair.tr.from, clip, pair.tr.type, pair.p);
+    else drawClip(ctx, env, clip);
   }
   ctx.restore();
   return layouts;
+}
+
+/** 畫一個片段（ctx 已經是專案座標） */
+function drawClip(ctx, env, clip) {
+  const { project, k, measure, getSource, getMediaInfo, hideTextFor, layouts } = env;
+  // 轉場多出來的部分停在第一格 / 最後一格
+  const t = canTransition(clip) ? visualTime(clip, env.t) : env.t;
+  const alpha = clipOpacityAt(clip, t);
+  const layout = clipLayout(project, clip, getMediaInfo(clip), measure, t);
+  layouts.set(clip.id, layout);
+  if (alpha <= 0) return;
+
+  ctx.save();
+  ctx.globalAlpha = alpha;
+  const filter = filterString(clip.filters, k);
+  if (filter !== 'none') ctx.filter = filter;
+  ctx.translate(layout.cx, layout.cy);
+  if (layout.rotation) ctx.rotate((layout.rotation * Math.PI) / 180);
+
+  if (clip.type === 'text') {
+    drawText(ctx, clip.text.counter ? { ...clip, text: shownText(clip, t) } : clip, layout, measure, clip.id === hideTextFor);
+  } else if (layout.framed) {
+    ctx.filter = 'none';
+    drawFramed(ctx, clip, layout, getSource(clip), getMediaInfo(clip), filter, k);
+  } else {
+    drawSource(ctx, getSource(clip), -layout.w / 2, -layout.h / 2, layout.w, layout.h);
+  }
+  ctx.restore();
+}
+
+// ---------- 轉場 ----------
+
+const layerCache = [];
+/** 跟輸出一樣大的暫存畫布（重複使用），已清空並設成專案座標 */
+function layer(i, canvas, k) {
+  let c = layerCache[i];
+  if (!c) {
+    c = typeof OffscreenCanvas !== 'undefined' ? new OffscreenCanvas(canvas.width, canvas.height) : document.createElement('canvas');
+    layerCache[i] = c;
+  }
+  if (c.width !== canvas.width || c.height !== canvas.height) { c.width = canvas.width; c.height = canvas.height; }
+  const lc = c.getContext('2d');
+  lc.setTransform(1, 0, 0, 1, 0, 0);
+  lc.globalAlpha = 1;
+  lc.globalCompositeOperation = 'source-over';
+  lc.filter = 'none';
+  lc.clearRect(0, 0, c.width, c.height);
+  lc.setTransform(k, 0, 0, k, 0, 0);
+  lc.imageSmoothingQuality = 'high';
+  return lc;
+}
+
+const smooth = p => p * p * (3 - 2 * p);
+
+/** 把一段畫到暫存畫布：dx / dy 位移、s 以畫面中心縮放 */
+function clipLayer(i, ctx, env, clip, { dx = 0, dy = 0, s = 1 } = {}) {
+  const { project, k } = env;
+  const lc = layer(i, ctx.canvas, k);
+  lc.translate(dx + (project.width / 2) * (1 - s), dy + (project.height / 2) * (1 - s));
+  if (s !== 1) lc.scale(s, s);
+  drawClip(lc, env, clip);
+  return lc.canvas;
+}
+
+/** 用像素座標把暫存畫布貼上去；clip(ctx) 可以先設定裁切範圍 */
+function put(ctx, src, { alpha = 1, filter = 'none', clip = null } = {}) {
+  ctx.save();
+  ctx.setTransform(1, 0, 0, 1, 0, 0);
+  ctx.globalAlpha = alpha;
+  if (filter !== 'none') ctx.filter = filter;
+  if (clip) { ctx.beginPath(); clip(ctx); ctx.clip(); }
+  ctx.drawImage(src, 0, 0);
+  ctx.restore();
+}
+
+/** a、b 兩張暫存畫布依比例真正混合（a × (1 − p) + b × p，含透明度），結果在 a */
+function mix(a, b, p) {
+  const c = a.getContext('2d');
+  c.save();
+  c.setTransform(1, 0, 0, 1, 0, 0);
+  c.globalCompositeOperation = 'destination-out';
+  c.globalAlpha = p;
+  c.fillRect(0, 0, a.width, a.height);
+  c.globalCompositeOperation = 'lighter';
+  c.drawImage(b, 0, 0);
+  c.restore();
+  return a;
+}
+
+/** 模糊後的複本 */
+function blurred(i, ctx, src, px) {
+  const lc = layer(i, ctx.canvas, 1);
+  if (px > 0.3) lc.filter = `blur(${px}px)`;
+  lc.drawImage(src, 0, 0);
+  return lc.canvas;
+}
+
+function drawTransition(ctx, env, a, b, type, p) {
+  const { project, k } = env;
+  const W = project.width, H = project.height;
+  const cw = ctx.canvas.width, ch = ctx.canvas.height;
+  const e = smooth(p);
+  switch (type) {
+    case 'push':
+    case 'pushup': {
+      const [ax, ay, bx, by] = type === 'push' ? [-e * W, 0, (1 - e) * W, 0] : [0, -e * H, 0, (1 - e) * H];
+      put(ctx, clipLayer(0, ctx, env, a, { dx: ax, dy: ay }));
+      put(ctx, clipLayer(1, ctx, env, b, { dx: bx, dy: by }));
+      return;
+    }
+    case 'zoom':
+      put(ctx, mix(clipLayer(0, ctx, env, a, { s: 1 + 0.3 * e }), clipLayer(1, ctx, env, b, { s: 1.3 - 0.3 * e }), p));
+      return;
+  }
+  const la = clipLayer(0, ctx, env, a);
+  const lb = clipLayer(1, ctx, env, b);
+  switch (type) {
+    case 'black':
+    case 'white': {
+      // 前半段變成純色、停一下、後半段再從純色出來
+      const amount = Math.min(1, (1 - Math.abs(2 * p - 1)) * 1.25);
+      const l = p < 0.5 ? la : lb;
+      const c = l.getContext('2d');
+      c.save();
+      c.setTransform(1, 0, 0, 1, 0, 0);
+      c.globalCompositeOperation = 'source-atop';
+      c.globalAlpha = amount;
+      c.fillStyle = type === 'black' ? '#000' : '#fff';
+      c.fillRect(0, 0, cw, ch);
+      c.restore();
+      put(ctx, l);
+      return;
+    }
+    case 'blur': {
+      const R = Math.min(cw, ch) * 0.04;
+      put(ctx, mix(blurred(2, ctx, la, R * Math.sin(p * Math.PI) * (p < 0.5 ? 1 : 0.6)), blurred(3, ctx, lb, R * Math.sin(p * Math.PI) * (p < 0.5 ? 0.6 : 1)), e));
+      return;
+    }
+    case 'wipe':
+      put(ctx, la);
+      put(ctx, lb, { clip: c => c.rect(0, 0, e * cw, ch) });
+      return;
+    case 'softwipe': {
+      // 漸層邊緣的擦除：B 從左邊柔和地蓋過來
+      const F = cw * 0.35;
+      const x = e * (cw + F) - F;
+      const c = lb.getContext('2d');
+      c.save();
+      c.setTransform(1, 0, 0, 1, 0, 0);
+      c.globalCompositeOperation = 'destination-in';
+      const g = c.createLinearGradient(x, 0, x + F, 0);
+      g.addColorStop(0, 'rgba(0,0,0,1)');
+      g.addColorStop(1, 'rgba(0,0,0,0)');
+      c.fillStyle = g;
+      c.fillRect(0, 0, cw, ch);
+      c.restore();
+      put(ctx, la);
+      put(ctx, lb);
+      return;
+    }
+    case 'iris':
+      put(ctx, la);
+      put(ctx, lb, { clip: c => c.arc(cw / 2, ch / 2, e * Math.hypot(cw, ch) / 2, 0, Math.PI * 2) });
+      return;
+    default: // fade
+      put(ctx, mix(la, lb, p));
+  }
 }
 
 function drawSource(ctx, src, x, y, w, h) {

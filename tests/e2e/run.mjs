@@ -1727,6 +1727,111 @@ try {
     assert.deepEqual((await clip()).text.counter, { from: 2152, duration: 3, ease: 'out' }, '重新打開：目標 + 20');
   });
 
+  console.log('\n轉場');
+  const clipOf2 = async (id) => (await state()).project.clips.find(c => c.id === id);
+  await test('轉場分頁：選取後面那段點「溶解」就加在接點上；時間軸有標記；匯出時接點中間是兩段混合', async () => {
+    const { red, blue } = await setupPacked();
+    await page.evaluate((id) => window.__oc.store.select([id]), blue.id);
+    await page.click('.tab[data-tab="transitions"]');
+    assert.equal(await page.locator('.tr-opt').count(), 10);
+    await page.click('[data-transition="fade"]');
+    assert.deepEqual((await clipOf2(blue.id)).transitionIn, { type: 'fade', duration: 0.8 });
+    assert.equal((await clipOf2(red.id)).transitionIn, null);
+    assert.equal(await page.locator(`.tl-trans[data-clip-id="${blue.id}"]`).count(), 1, '時間軸標記');
+    assert.equal(await page.locator('.tr-opt.on').getAttribute('data-transition'), 'fade');
+    assert.equal(await page.evaluate(() => window.__oc.player.time), 2, '播放頭移到接點');
+    // 預覽：接點正中間是紅藍混合
+    await page.waitForTimeout(600);
+    const px = await page.evaluate(() => {
+      const c = document.getElementById('previewCanvas');
+      return Array.from(c.getContext('2d').getImageData(c.width / 2, c.height / 2, 1, 1).data);
+    });
+    assert.ok(px[0] > 60 && px[2] > 60, `預覽混合：${px}`);
+    // 匯出：轉場前後是純色、中間混合
+    const mid = await exportedColors('fade', 2.0);
+    const [r, , b] = mid.rgb(0.5, 0.5);
+    assert.ok(r > 70 && b > 70, `接點中間混合：${mid.rgb(0.5, 0.5)}`);
+    assert.equal((await exportedColors('fade-before', 1.4))(0.5, 0.5), 'red');
+    assert.equal((await exportedColors('fade-after', 2.6))(0.5, 0.5), 'blue');
+    await page.keyboard.press('Control+z');
+    assert.equal((await clipOf2(blue.id)).transitionIn, null, '一次就能復原');
+  });
+
+  await test('屬性面板的轉場：改成擦除、調整長度；匯出時左邊是新畫面、右邊還是舊畫面', async () => {
+    const { blue } = await setupPacked();
+    await page.evaluate((id) => window.__oc.store.select([id]), blue.id);
+    const sec = page.locator('.insp-section').filter({ has: page.locator('select[aria-label="轉場效果"]') });
+    assert.match(await sec.textContent(), /跟前一段的接點/);
+    await sec.locator('select').selectOption('wipe');
+    assert.deepEqual((await clipOf2(blue.id)).transitionIn, { type: 'wipe', duration: 0.8 });
+    const num = sec.locator('.field', { hasText: '長度' }).locator('.num');
+    await num.fill('2');
+    await num.press('Enter');
+    assert.equal((await clipOf2(blue.id)).transitionIn.duration, 2);
+    const at = await exportedColors('wipe', 2.0);
+    assert.equal(at(0.2, 0.5), 'blue', '左邊已經換成新畫面');
+    assert.equal(at(0.8, 0.5), 'red', '右邊還是舊畫面');
+    await sec.locator('select').selectOption('');
+    assert.equal((await clipOf2(blue.id)).transitionIn, null, '選「無」移除');
+  });
+
+  await test('套用到全部接點、移除轉場；沒有接點時提示', async () => {
+    const { red, blue, photo } = await setupPacked();
+    await page.click('.tab[data-tab="transitions"]');
+    await page.evaluate(() => window.__oc.player.seek(3.9));
+    await page.click('[data-transition="iris"]');
+    assert.equal((await clipOf2(photo.id)).transitionIn?.type, 'iris', '沒選取：用離播放頭最近的接點');
+    await page.click('[data-dur="1.2"]');
+    await page.click('#transitionsPanel [data-act="all"]');
+    const p = (await state()).project;
+    assert.deepEqual([red, blue, photo].map(c => p.clips.find(x => x.id === c.id).transitionIn), [null, { type: 'iris', duration: 1.2 }, { type: 'iris', duration: 1.2 }]);
+    assert.equal(await page.locator('.tl-trans').count(), 2);
+    // 點時間軸上的標記會選取那段
+    await page.locator(`.tl-trans[data-clip-id="${blue.id}"] .tl-trans-dot`).click();
+    assert.deepEqual(await page.evaluate(() => window.__oc.store.selection), [blue.id]);
+    await page.click('#transitionsPanel [data-act="remove"]');
+    assert.equal((await clipOf2(blue.id)).transitionIn, null);
+    assert.equal(await page.locator('.tl-trans').count(), 1);
+    // 只有一段：沒有接點
+    await newProjectUI();
+    await page.setInputFiles('#fileInput', [fx.red]);
+    await waitFor(async () => (await state()).project.clips.length === 1, 10000, '匯入');
+    await page.click('.tab[data-tab="transitions"]');
+    await page.click('[data-transition="fade"]');
+    await page.waitForSelector('.toast:has-text("轉場需要接點")', { timeout: 3000 });
+    assert.equal((await state()).project.clips[0].transitionIn, null);
+  });
+
+  await test('每一種轉場都能預覽與匯出（推移、縮放、模糊…不會出錯）', async () => {
+    const { blue } = await setupPacked();
+    const errBefore = errors.length;
+    for (const type of ['black', 'white', 'blur', 'softwipe', 'push', 'pushup', 'zoom']) {
+      await page.evaluate(async ({ id, type }) => {
+        const P = await import('./assets/js/core/project.js');
+        const { store, player } = window.__oc;
+        store.commit(P.updateClip(store.project, id, { transitionIn: { type, duration: 1 } }));
+        player.seek(1.8);
+      }, { id: blue.id, type });
+      await page.waitForTimeout(150);
+    }
+    // 推移：中間時左半邊是舊畫面往左推出、右半邊是新畫面
+    await page.evaluate(async (id) => {
+      const P = await import('./assets/js/core/project.js');
+      window.__oc.store.commit(P.updateClip(window.__oc.store.project, id, { transitionIn: { type: 'push', duration: 1 } }));
+    }, blue.id);
+    const at = await exportedColors('push', 2.0);
+    assert.equal(at(0.25, 0.5), 'red');
+    assert.equal(at(0.75, 0.5), 'blue');
+    // 白場：接點正中間是白色
+    await page.evaluate(async (id) => {
+      const P = await import('./assets/js/core/project.js');
+      window.__oc.store.commit(P.updateClip(window.__oc.store.project, id, { transitionIn: { type: 'white', duration: 1 } }));
+    }, blue.id);
+    const w = (await exportedColors('white', 2.0)).rgb(0.5, 0.5);
+    assert.ok(w.every(v => v > 225), `白色：${w}`);
+    assert.deepEqual(errors.slice(errBefore), [], '沒有 JS 錯誤');
+  });
+
   console.log('\n英文版');
   /** 畫面上還看得到的中文（語言切換按鈕、使用者自己的內容除外） */
   const leftoverChinese = (pg) => pg.evaluate(() => {
@@ -1787,7 +1892,7 @@ try {
     await pg.waitForFunction(() => window.__oc.store.project.clips.length >= 7, null, { timeout: 15000 });
     assert.equal(await pg.evaluate(() => window.__oc.store.project.name), 'My first video');
     await check('範例專案');
-    for (const tab of ['text', 'graphics', 'layout', 'media']) { await pg.click(`.tab[data-tab="${tab}"]`); await check(`${tab} 分頁`); }
+    for (const tab of ['text', 'graphics', 'layout', 'transitions', 'media']) { await pg.click(`.tab[data-tab="${tab}"]`); await check(`${tab} 分頁`); }
     for (const type of ['image', 'text', 'audio']) {
       await pg.evaluate((type) => window.__oc.store.select([window.__oc.store.project.clips.find(c => c.type === type).id]), type);
       await check(`${type} 屬性`);

@@ -4,6 +4,7 @@ import {
   clipEnd, getClip, getTrack, canHost, moveClip, placeClip, trimClip, mediaLimit, snapPoints, snapClipStart, snapTime,
   getDuration, sourceTime, TRACK_KIND_FOR_TYPE, updateTrack, removeTrack, updateClip, audioFadesOf,
 } from '../core/project.js';
+import { effectiveTransition } from '../core/transitions.js';
 import { rulerStep, formatRulerLabel, clamp } from '../core/time.js';
 import { icon } from './icons.js';
 import { escapeHtml } from './dialogs.js';
@@ -31,6 +32,7 @@ export class Timeline {
     this.onDropMedia = onDropMedia;
     this.rows = new Map();
     this.clipEls = new Map();
+    this.trEls = new Map(); // 接點上的轉場標記（clipId → 元素）
     this.drag = null;
     this.bgQueued = false;
     this.trackH = 64;
@@ -177,6 +179,29 @@ export class Timeline {
       seenClips.add(c.id);
     }
     for (const [id, el] of this.clipEls) if (!seenClips.has(id)) { el.remove(); this.clipEls.delete(id); }
+
+    // 轉場標記：接點上的小菱形，左右兩段被重疊的範圍畫成淡淡的斜線
+    const seenTr = new Set();
+    for (const c of p.clips) {
+      const tr = effectiveTransition(p, c);
+      if (!tr) continue;
+      let el = this.trEls.get(c.id);
+      if (!el) {
+        el = document.createElement('div');
+        el.className = 'tl-trans';
+        el.dataset.clipId = c.id;
+        el.innerHTML = `<span class="tl-trans-dot">${icon('transition')}</span>`;
+        this.trEls.set(c.id, el);
+      }
+      el.style.left = `${this.timeToX(c.start)}px`;
+      el.style.setProperty('--w', `${tr.duration * this.pps}px`);
+      el.classList.toggle('selected', sel.has(c.id));
+      el.firstChild.title = _t('轉場（{s} 秒）：點一下選取，在右側調整', { s: tr.duration.toFixed(1) });
+      const row = this.rows.get(c.trackId);
+      if (row && el.parentNode !== row) row.appendChild(el);
+      seenTr.add(c.id);
+    }
+    for (const [id, el] of this.trEls) if (!seenTr.has(id)) { el.remove(); this.trEls.delete(id); }
 
     // 空狀態提示
     this.els.tracks.querySelectorAll('.tl-empty').forEach(n => n.remove());
@@ -425,6 +450,8 @@ export class Timeline {
     });
     this.els.tracks.addEventListener('pointerdown', (e) => {
       if (e.button !== 0) return;
+      const trEl = e.target.closest('.tl-trans');
+      if (trEl) { e.preventDefault(); this.store.select(trEl.dataset.clipId); return; }
       const clipEl = e.target.closest('.clip');
       if (!clipEl) {
         // 點空白處：取消選取並移動播放頭（按住可以拖曳）

@@ -166,6 +166,22 @@ export function cleanFrame(f) {
   };
 }
 
+// ============================================================
+// 轉場（詳細的計算在 core/transitions.js）
+// ============================================================
+export const TRANSITION_TYPES = ['fade', 'black', 'white', 'blur', 'wipe', 'softwipe', 'push', 'pushup', 'iris', 'zoom'];
+export const DEFAULT_TRANSITION = 0.8;
+export const MIN_TRANSITION = 0.1;
+export const MAX_TRANSITION = 5;
+export const canTransition = (c) => c?.type === 'video' || c?.type === 'image';
+
+/** 檢查 / 修正轉場設定；不是物件就回傳 null（沒有轉場） */
+export function cleanTransition(tr) {
+  if (!tr || typeof tr !== 'object' || Array.isArray(tr)) return null;
+  const d = typeof tr.duration === 'number' && isFinite(tr.duration) ? tr.duration : DEFAULT_TRANSITION;
+  return { type: TRANSITION_TYPES.includes(tr.type) ? tr.type : 'fade', duration: Math.min(MAX_TRANSITION, Math.max(MIN_TRANSITION, d)) };
+}
+
 export function makeClip(type, fields = {}) {
   const clip = {
     id: uid('clp'),
@@ -186,10 +202,12 @@ export function makeClip(type, fields = {}) {
     filters: { brightness: 100, contrast: 100, saturation: 100, blur: 0, grayscale: 0 },
     frame: null,
     audioFades: null,
+    transitionIn: null,     // 跟前一段之間的轉場 { type, duration }
   };
   if (type === 'text') clip.text = defaultText();
-  const { transform, filters, text, frame, audioFades, ...rest } = fields;
+  const { transform, filters, text, frame, audioFades, transitionIn, ...rest } = fields;
   Object.assign(clip, rest);
+  if (transitionIn && canTransition(clip)) clip.transitionIn = cleanTransition(transitionIn);
   if (audioFades && hasSeparateAudioFades(clip)) clip.audioFades = { in: Math.max(0, num(audioFades.in, 0)), out: Math.max(0, num(audioFades.out, 0)) };
   if (frame && canFrame(clip)) clip.frame = cleanFrame(frame);
   if (transform) Object.assign(clip.transform, transform);
@@ -511,7 +529,8 @@ export function splitClip(project, id, t) {
     right.fadeIn = 0;
     left.duration = t - left.start;
     left.fadeOut = 0;
-    // 分割點不淡入淡出（聲音也一樣）
+    // 分割點不淡入淡出（聲音也一樣），也不要轉場
+    right.transitionIn = null;
     if (left.audioFades) { left.audioFades.out = 0; right.audioFades.in = 0; }
     clampFades(left);
     clampFades(right);
@@ -569,7 +588,7 @@ export function updateClip(project, id, patch) {
   if (!getClip(project, id)) return project;
   return produce(project, p => {
     const c = getClip(p, id);
-    const { transform, filters, text, speed, frame, audioFades, ...rest } = patch;
+    const { transform, filters, text, speed, frame, audioFades, transitionIn, ...rest } = patch;
     for (const [k, v] of Object.entries(rest)) {
       if (['id', 'type', 'mediaId', 'trackId', 'start', 'duration', 'srcIn'].includes(k)) continue;
       c[k] = v;
@@ -578,6 +597,8 @@ export function updateClip(project, id, patch) {
     if (frame === null) c.frame = null;
     else if (frame && canFrame(c)) c.frame = cleanFrame({ ...(c.frame ?? defaultFrame()), ...frame });
     // audioFades: null 讓聲音跟著畫面；物件則從目前的聲音淡入淡出改起（也就是分開設定）
+    if (transitionIn === null) c.transitionIn = null;
+    else if (transitionIn && canTransition(c)) c.transitionIn = cleanTransition({ ...(c.transitionIn ?? { type: 'fade', duration: DEFAULT_TRANSITION }), ...transitionIn });
     if (audioFades === null) c.audioFades = null;
     else if (audioFades && hasSeparateAudioFades(c)) c.audioFades = { ...audioFadesOf(c), ...audioFades };
     if (transform) Object.assign(c.transform, transform);
@@ -711,6 +732,7 @@ function sanitizeClip(c) {
     rotation: clamp(num(t.rotation, 0), -360, 360),
   };
   m.frame = canFrame(m) ? cleanFrame(c.frame) : null;
+  m.transitionIn = canTransition(m) ? cleanTransition(c.transitionIn) : null;
   const af = c.audioFades;
   m.audioFades = hasSeparateAudioFades(m) && af && typeof af === 'object' && !Array.isArray(af)
     ? { in: Math.max(0, num(af.in, 0)), out: Math.max(0, num(af.out, 0)) } : null;

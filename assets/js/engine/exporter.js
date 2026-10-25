@@ -4,7 +4,8 @@
 //   2. 瀏覽器沒有 WebCodecs 時，用 MediaRecorder 即時錄製成 WebM（需要整段播放一次）。
 // 聲音一律用 OfflineAudioContext 預先混好，包含音量、淡入淡出、變速。
 
-import { activeClipsAt, getDuration, sourceTime, clipEnd } from '../core/project.js';
+import { getDuration } from '../core/project.js';
+import { visualClipsAt, visualRange, visualSourceTime } from '../core/transitions.js';
 import { drawFrame, fontString } from './renderer.js';
 import { Player } from './player.js';
 import { loadMediabunny } from './mb.js';
@@ -185,22 +186,23 @@ class FrameSources {
     this.pos = new Map();  // clipId → 這個片段已經走到第幾格
   }
 
-  /** 片段在輸出中佔用的格數範圍 [first, last] */
+  /** 片段在輸出中佔用的格數範圍 [first, last]（含轉場多出來的部分） */
   range(clip) {
-    const first = Math.max(0, Math.ceil(clip.start * this.fps - 1e-6));
-    const last = Math.min(this.frames - 1, Math.ceil(clipEnd(clip) * this.fps - 1e-6) - 1);
+    const [a, b] = visualRange(this.project, clip);
+    const first = Math.max(0, Math.ceil(a * this.fps - 1e-6));
+    const last = Math.min(this.frames - 1, Math.ceil(b * this.fps - 1e-6) - 1);
     return [first, last];
   }
 
   async prepare(i) {
     const t = i / this.fps;
-    const active = activeClipsAt(this.project, t).filter(c => c.type === 'video' && this.runtime.has(c.mediaId));
+    const active = visualClipsAt(this.project, t).filter(c => c.type === 'video' && this.runtime.has(c.mediaId));
     for (const c of active) {
       let cf = this.open.get(c.id);
       if (!cf) {
         const [first, last] = this.range(c);
         const ts = [];
-        for (let k = first; k <= last; k++) ts.push(Math.max(0, sourceTime(c, k / this.fps)));
+        for (let k = first; k <= last; k++) ts.push(visualSourceTime(this.project, c, k / this.fps));
         cf = new ClipFrames(c, this.runtime.get(c.mediaId), this.mb, ts);
         await cf.open();
         this.open.set(c.id, cf);
@@ -215,7 +217,7 @@ class FrameSources {
     }
     // 關掉已經結束的片段
     for (const [id, cf] of this.open) {
-      if (clipEnd(cf.clip) <= t) { cf.close(); this.open.delete(id); }
+      if (visualRange(this.project, cf.clip)[1] <= t) { cf.close(); this.open.delete(id); }
     }
   }
 

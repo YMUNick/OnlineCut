@@ -40,6 +40,7 @@ Most online editors make you **upload gigabytes of footage**, **sign up**, and t
 | 🎨 **Built-in graphics** | 23 editable text stickers (burst badge, speech & thought bubbles, neon sign, stamp, washi tape, lower third, LIVE badge…), 18 backgrounds, 24 stickers and 13 overlays (Polaroid, manga speed lines, livestream, snowfall, falling hearts…). All vector, so they stay sharp at any size. |
 | 🔤 **Titles & captions** | **Double-click any text in the preview to retype it** and change font, size, weight and color in place. 15 one-click styles (neon, variety show, handwritten, movie subtitle, typewriter…), 11 fonts, outline, shadow, glow and 17 shape styles. |
 | ⬛ **Solid screens & countdowns** | Insert a black, white or any-color screen at the playhead (later clips move back). Make any number roll in, e.g. 2152 → 2132, slowing down as it lands. |
+| 🔀 **Transitions** | 10 transitions between back-to-back clips: dissolve, dip to black, flash to white, blur, wipe, soft gradient wipe, push, push up, circle reveal and zoom. Apply to one cut or every cut in one click, then set the length. |
 | 🎛️ **Filters, speed & fades** | Brightness, contrast, saturation, B&W and blur with presets; 0.25×–4× speed; volume up to 200%; fades you drag right on the timeline, with separate audio fades for video clips (e.g. let the music fade out while the picture stays). |
 | 📐 **Any aspect ratio** | 16:9, 9:16 (Reels / Shorts / TikTok), 1:1 and 4:5. Portrait footage switches the canvas automatically. |
 | 📦 **Frame-accurate MP4 export** | H.264 + AAC up to 1080p 60 fps, rendered frame by frame with WebCodecs, usually faster than real time. |
@@ -112,8 +113,8 @@ Every entry's CRC-32 is checked on open, and the project is fully validated and 
 ## 🧪 Tests
 
 ```bash
-npm test                 # 180+ unit tests, no dependencies
-npm run test:e2e         # 75+ end-to-end tests in a real browser (needs ffmpeg + Playwright/Chromium)
+npm test                 # 200+ unit tests, no dependencies
+npm run test:e2e         # 95+ end-to-end tests in a real browser (needs ffmpeg + Playwright/Chromium)
 ONLY=版型 npm run test:e2e        # run only tests whose (Chinese) name contains a keyword
 ```
 

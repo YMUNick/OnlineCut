@@ -26,6 +26,7 @@ const P = {
   music: '<path d="M9 18V5l11-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="17" cy="16" r="3"/>',
   type: '<path d="M5 6V4h14v2"/><path d="M12 4v16M9 20h6"/>',
   layout: '<rect x="3" y="4" width="18" height="16" rx="2"/><rect x="12.5" y="12" width="6" height="5" rx="1"/>',
+  transition: '<rect x="2.5" y="5" width="9" height="14" rx="1.5"/><path d="M14 5h6a1.5 1.5 0 0 1 1.5 1.5v11a1.5 1.5 0 0 1-1.5 1.5h-6"/><path d="m8 9 3 3-3 3"/><path d="M15 9.5v5"/>',
   shapes: '<circle cx="7.5" cy="7.5" r="4"/><path d="m16.5 3 4.5 8h-9z"/><rect x="7" y="13.5" width="10" height="7" rx="1.5"/>',
   layers: '<path d="m12 3 9 5-9 5-9-5z"/><path d="m3 13 9 5 9-5"/>',
   sliders: '<path d="M4 6h10M18 6h2M4 12h4M12 12h8M4 18h12M20 18h0"/><circle cx="16" cy="6" r="2"/><circle cx="10" cy="12" r="2"/><circle cx="18" cy="18" r="2"/>',

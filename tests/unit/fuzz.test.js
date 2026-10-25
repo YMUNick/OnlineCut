@@ -47,6 +47,11 @@ export function violations(p) {
       if (c.type !== 'video') out.push(`${tag} 不能有獨立的聲音淡入淡出`);
       else if (!(a.in >= 0 && a.in <= c.duration + EPS && a.out >= 0 && a.out <= c.duration + EPS)) out.push(`${tag} audioFades=${JSON.stringify(a)}`);
     }
+    if (c.transitionIn !== null) {
+      const tr = c.transitionIn;
+      if (!P.canTransition(c)) out.push(`${tag} 不能有轉場`);
+      else if (!tr || !P.TRANSITION_TYPES.includes(tr.type) || !(tr.duration >= P.MIN_TRANSITION && tr.duration <= P.MAX_TRANSITION)) out.push(`${tag} 轉場不合法 ${JSON.stringify(tr)}`);
+    }
     if (!(c.opacity >= 0 && c.opacity <= 1)) out.push(`${tag} opacity=${c.opacity}`);
     if (!(c.volume >= 0 && c.volume <= 2)) out.push(`${tag} volume=${c.volume}`);
     for (const v of [c.start, c.duration, c.srcIn, c.transform.x, c.transform.y, c.transform.scale, c.transform.rotation]) {
@@ -88,7 +93,7 @@ function randomStep(p, r) {
   const pick = (arr) => arr[Math.floor(r() * arr.length)];
   const clip = p.clips.length ? pick(p.clips) : null;
   const t = r() * 30 - 2;
-  const op = Math.floor(r() * 16);
+  const op = Math.floor(r() * 17);
   switch (op) {
     case 0: case 1: {
       const m = pick(Object.values(p.media));
@@ -108,6 +113,7 @@ function randomStep(p, r) {
     }
     case 12: return clip ? P.updateClip(p, clip.id, { frame: pick([null, { x: r() * 3 - 1, w: r() * 3 - 0.5, shape: pick(['circle', 'x', 1]) }, { border: pick([NaN, -5, 1e9, 4]) }, 'junk']) }) : p;
     case 14: return clip ? P.updateClip(p, clip.id, { audioFades: pick([null, { in: r() * 12 }, { out: r() * 12 - 2 }, { in: NaN, out: 'x' }]) }) : p;
+    case 15: return clip ? P.updateClip(p, clip.id, { transitionIn: pick([null, { type: pick(P.TRANSITION_TYPES) }, { duration: r() * 8 - 1 }, { type: 'bogus', duration: NaN }, 'junk']) }) : p;
     case 13: return clip ? P.placeClip(p, clip.id, { start: t, trackId: r() < 0.3 ? pick(p.tracks).id : undefined, closeGap: r() < 0.5 }) : p;
     case 10: return r() < 0.5 ? P.addTrack(p, pick(['video', 'audio'])) : P.removeTrack(p, pick(p.tracks).id);
     default: return P.updateTrack(p, pick(p.tracks).id, { locked: r() < 0.2, hidden: r() < 0.2, muted: r() < 0.2 });
@@ -146,10 +152,10 @@ describe('壞掉 / 惡意的存檔', () => {
     const valid = baseProject();
     for (let i = 0; i < 3000; i++) {
       const raw = JSON.parse(JSON.stringify(valid));
-      raw.clips = P.addClip(P.addClip(valid, 'video', { mediaId: 'v1', frame: { x: 0.1, y: 0.2, w: 0.3, h: 0.3, shape: 'circle', border: 6, shadow: true } }).project, 'text', {}).project.clips;
+      raw.clips = P.addClip(P.addClip(valid, 'video', { mediaId: 'v1', frame: { x: 0.1, y: 0.2, w: 0.3, h: 0.3, shape: 'circle', border: 6, shadow: true }, transitionIn: { type: 'wipe', duration: 1 } }).project, 'text', {}).project.clips;
       // 隨機把一些欄位換成垃圾
       for (let k = 0; k < 4; k++) {
-        const target = [raw, raw.clips?.[0], raw.clips?.[1], raw.clips?.[0]?.transform, raw.clips?.[1]?.text, raw.tracks?.[0], raw.media?.v1, raw.clips?.[0]?.frame][Math.floor(r() * 8)];
+        const target = [raw, raw.clips?.[0], raw.clips?.[1], raw.clips?.[0]?.transform, raw.clips?.[1]?.text, raw.tracks?.[0], raw.media?.v1, raw.clips?.[0]?.frame, raw.clips?.[0]?.transitionIn][Math.floor(r() * 9)];
         if (target && typeof target !== 'object') continue;
         if (!target) continue;
         const keys = Object.keys(target);
