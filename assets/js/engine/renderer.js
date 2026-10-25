@@ -193,7 +193,7 @@ function drawClip(ctx, env, clip) {
     ctx.filter = 'none';
     drawFramed(ctx, clip, layout, getSource(clip), getMediaInfo(clip), filter, k);
   } else {
-    drawSource(ctx, getSource(clip), -layout.w / 2, -layout.h / 2, layout.w, layout.h);
+    drawSource(ctx, getSource(clip), -layout.w / 2, -layout.h / 2, layout.w, layout.h, clip.transform);
   }
   ctx.restore();
 }
@@ -337,13 +337,24 @@ function drawTransition(ctx, env, a, b, type, p) {
   }
 }
 
-function drawSource(ctx, src, x, y, w, h) {
+/** flip：片段的 transform（flipX 左右、flipY 上下翻轉），以這個範圍的中心鏡像 */
+function drawSource(ctx, src, x, y, w, h, flip = null) {
   if (!src || !isDrawable(src)) return;
+  const sx = flip?.flipX ? -1 : 1, sy = flip?.flipY ? -1 : 1;
+  const mirrored = sx !== 1 || sy !== 1;
+  if (mirrored) {
+    ctx.save();
+    ctx.translate(x + w / 2, y + h / 2);
+    ctx.scale(sx, sy);
+    x = -w / 2;
+    y = -h / 2;
+  }
   try {
     // mediabunny 的 VideoSample 自己會處理旋轉資訊（手機直拍影片）
     if (typeof src.draw === 'function') src.draw(ctx, x, y, w, h);
     else ctx.drawImage(src, x, y, w, h);
   } catch { /* 畫面尚未就緒 */ }
+  if (mirrored) ctx.restore();
 }
 
 function drawFramed(ctx, clip, layout, src, mediaInfo, filter, k) {
@@ -366,7 +377,8 @@ function drawFramed(ctx, clip, layout, src, mediaInfo, filter, k) {
   ctx.clip();
   if (filter !== 'none') ctx.filter = filter;
   const c = framedContent(clip, layout, mediaInfo);
-  drawSource(ctx, src, c.x, c.y, c.w, c.h);
+  // 以框裡影像自己的中心鏡像，所以取景拖曳的方向不會反過來
+  drawSource(ctx, src, c.x, c.y, c.w, c.h, clip.transform);
   ctx.restore();
   if (f.border > 0) {
     ctx.lineWidth = f.border;

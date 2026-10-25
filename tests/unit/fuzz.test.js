@@ -57,6 +57,8 @@ export function violations(p) {
     for (const v of [c.start, c.duration, c.srcIn, c.transform.x, c.transform.y, c.transform.scale, c.transform.rotation]) {
       if (!Number.isFinite(v)) out.push(`${tag} 有非數字的值`);
     }
+    if (typeof c.transform.flipX !== 'boolean' || typeof c.transform.flipY !== 'boolean') out.push(`${tag} 翻轉不是 true / false`);
+    else if ((c.transform.flipX || c.transform.flipY) && !P.canFlip(c)) out.push(`${tag} 不能翻轉`);
     if (c.frame !== null) {
       const f = c.frame;
       if (!P.canFrame(c)) out.push(`${tag} 不能有畫面框`);

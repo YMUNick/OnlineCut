@@ -67,6 +67,7 @@ async function makeFixtures(dir) {
     rotated: path.join(dir, 'phone.mp4'),
     red: path.join(dir, 'red.mp4'),
     blue: path.join(dir, 'blue.mp4'),
+    stacked: path.join(dir, 'stacked.mp4'),
   };
   ffmpeg(['-f', 'lavfi', '-i', 'testsrc2=size=640x360:rate=30:duration=4', '-f', 'lavfi', '-i', 'sine=frequency=440:duration=4', '-c:v', 'libx264', '-pix_fmt', 'yuv420p', '-c:a', 'aac', '-shortest', f.video]);
   ffmpeg(['-f', 'lavfi', '-i', 'testsrc2=size=360x640:rate=30:duration=3', '-f', 'lavfi', '-i', 'sine=frequency=660:duration=3', '-c:v', 'libx264', '-pix_fmt', 'yuv420p', '-c:a', 'aac', '-shortest', f.portrait]);
@@ -79,6 +80,9 @@ async function makeFixtures(dir) {
   const plain = path.join(dir, 'plain.mp4');
   ffmpeg(['-f', 'lavfi', '-i', 'color=red:s=320x360:d=2[a];color=blue:s=320x360:d=2[b];[a][b]hstack', '-c:v', 'libx264', '-pix_fmt', 'yuv420p', plain]);
   ffmpeg(['-display_rotation', '90', '-i', plain, '-c', 'copy', f.rotated]);
+  // 翻轉用：左紅右藍（plain）與上紅下藍
+  f.plain = plain;
+  ffmpeg(['-f', 'lavfi', '-i', 'color=red:s=640x180:d=2[a];color=blue:s=640x180:d=2[b];[a][b]vstack', '-c:v', 'libx264', '-pix_fmt', 'yuv420p', f.stacked]);
   await import('node:fs').then(fs => {
     fs.writeFileSync(f.bad, 'hello');
     fs.writeFileSync(f.fake, Buffer.from('this is not a video'));
@@ -1830,6 +1834,102 @@ try {
     const w = (await exportedColors('white', 2.0)).rgb(0.5, 0.5);
     assert.ok(w.every(v => v > 225), `白色：${w}`);
     assert.deepEqual(errors.slice(errBefore), [], '沒有 JS 錯誤');
+  });
+
+  console.log('\n翻轉');
+  /** 新專案裡只有 file 這一段，選取它、停在 0.5 秒 */
+  async function setupFlip(file) {
+    await newProjectUI();
+    await page.setInputFiles('#fileInput', file);
+    await waitFor(async () => (await state()).project.clips.length === 1, 10000, '匯入');
+    const id = (await state()).project.clips[0].id;
+    await page.evaluate((id) => { window.__oc.store.select([id]); window.__oc.player.seek(0.5); }, id);
+    await page.waitForSelector('#inspector [data-flip="x"]', { timeout: 3000 });
+    await page.waitForTimeout(300);
+    return id;
+  }
+  const flipOf = async (id) => { const t = (await clipOf(id)).transform; return [t.flipX, t.flipY]; };
+
+  await test('左右翻轉：預覽與匯出都左右對調', async () => {
+    const errBefore = errors.length;
+    const id = await setupFlip(fx.plain);
+    assert.deepEqual([await previewColor(0.25, 0.5), await previewColor(0.75, 0.5)], ['red', 'blue'], '翻轉前');
+    await page.click('#inspector [data-flip="x"]');
+    await waitFor(async () => (await flipOf(id))[0] === true, 3000, '翻轉');
+    assert.equal(await page.isVisible('#inspector [data-flip="x"].on'), true, '按鈕顯示已開啟');
+    assert.deepEqual(await flipOf(id), [true, false], '只翻左右');
+    await page.waitForTimeout(300);
+    assert.deepEqual([await previewColor(0.25, 0.5), await previewColor(0.75, 0.5)], ['blue', 'red'], '預覽');
+    const at = await exportedColors('flip-x');
+    assert.deepEqual([at(0.25, 0.5), at(0.75, 0.5)], ['blue', 'red'], '匯出');
+    assert.deepEqual(errors.slice(errBefore), [], '沒有 JS 錯誤');
+  });
+
+  await test('上下翻轉：預覽與匯出都上下對調；重新整理後還在', async () => {
+    const id = await setupFlip(fx.stacked);
+    assert.deepEqual([await previewColor(0.5, 0.25), await previewColor(0.5, 0.75)], ['red', 'blue'], '翻轉前');
+    await page.click('#inspector [data-flip="y"]');
+    await waitFor(async () => (await flipOf(id))[1] === true, 3000, '翻轉');
+    assert.deepEqual(await flipOf(id), [false, true], '只翻上下');
+    await page.waitForTimeout(300);
+    assert.deepEqual([await previewColor(0.5, 0.25), await previewColor(0.5, 0.75)], ['blue', 'red'], '預覽');
+    const at = await exportedColors('flip-y');
+    assert.deepEqual([at(0.5, 0.25), at(0.5, 0.75)], ['blue', 'red'], '匯出');
+    await page.waitForTimeout(1200);
+    await page.reload();
+    await page.waitForFunction(() => window.__oc && window.__oc.store.project.clips.length > 0 && Object.keys(window.__oc.store.project.media).every(id => window.__oc.runtime.has(id)));
+    assert.deepEqual(await flipOf(id), [false, true], '重新整理後還是翻轉的');
+    await page.evaluate(() => window.__oc.player.seek(0.5));
+    await waitFor(async () => (await previewColor(0.5, 0.25)) === 'blue', 5000, '重新整理後的預覽');
+  });
+
+  await test('重設：左右與上下翻轉都取消', async () => {
+    const id = await setupFlip(fx.plain);
+    await page.click('#inspector [data-flip="x"]');
+    await page.click('#inspector [data-flip="y"]');
+    await waitFor(async () => (await flipOf(id)).every(Boolean), 3000, '兩個都翻轉');
+    await page.click('#inspector [data-reset]');
+    await waitFor(async () => (await flipOf(id)).every(v => v === false), 3000, '重設');
+    assert.equal(await page.locator('#inspector [data-flip].on').count(), 0, '按鈕都沒有亮');
+  });
+
+  await test('雙畫面版型：只在框裡翻轉，取景拖曳方向不變；取景的重設也取消翻轉', async () => {
+    await newProjectUI();
+    await page.setInputFiles('#fileInput', [fx.red, fx.plain]);
+    await waitFor(async () => (await state()).project.clips.length === 2, 10000, '匯入兩支');
+    const id = await page.evaluate(async () => {
+      const P = await import('./assets/js/core/project.js');
+      const { store, player } = window.__oc;
+      const name = (c) => store.project.media[c.mediaId].name;
+      const red = store.project.clips.find(c => name(c) === 'red.mp4');
+      const plain = store.project.clips.find(c => name(c) === 'plain.mp4');
+      let p = P.moveClip(store.project, red.id, { start: 0 });
+      const top = p.tracks.find(t => t.kind === 'video' && t.id !== red.trackId);
+      p = P.moveClip(p, plain.id, { start: 0, trackId: top.id });
+      store.commit(p, { select: [plain.id] });
+      player.seek(0.5);
+      return plain.id;
+    });
+    await page.click('.tab[data-tab="layout"]');
+    await page.click('[data-layout="split-h"]');
+    await waitFor(async () => !!(await clipOf(id)).frame, 3000, '套用');
+    // 右邊的框裡：素材裁切填滿，中線（x = 0.75）左紅右藍
+    let at = await exportedColors('flip-frame-before');
+    assert.deepEqual([at(0.25, 0.5), at(0.7, 0.5), at(0.8, 0.5)], ['red', 'red', 'blue'], '翻轉前');
+    await page.click('#inspector [data-flip="x"]');
+    await waitFor(async () => (await flipOf(id))[0] === true, 3000, '翻轉');
+    at = await exportedColors('flip-frame');
+    assert.deepEqual([at(0.25, 0.5), at(0.7, 0.5), at(0.8, 0.5)], ['red', 'blue', 'red'], '只有框裡左右對調');
+    // 取景往右移 120px：分界線要跟著往右（0.75 → 0.8125），不能反方向
+    await page.evaluate(async (id) => {
+      const P = await import('./assets/js/core/project.js');
+      window.__oc.store.commit(P.updateClip(window.__oc.store.project, id, { transform: { x: 120 } }));
+    }, id);
+    at = await exportedColors('flip-frame-pan');
+    assert.deepEqual([at(0.72, 0.5), at(0.8, 0.5), at(0.85, 0.5)], ['blue', 'blue', 'red'], '取景移動方向');
+    await page.click('#inspector [data-reset]');
+    await waitFor(async () => (await flipOf(id))[0] === false, 3000, '取景重設');
+    assert.equal((await clipOf(id)).transform.x, 0);
   });
 
   console.log('\n英文版');

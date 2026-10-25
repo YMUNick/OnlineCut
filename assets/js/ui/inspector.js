@@ -1,6 +1,6 @@
 // 右側屬性面板：專案設定 / 片段屬性
 
-import { updateClip, renameProject, setAspect, ASPECT_PRESETS, getDuration, clipEnd, canFrame, MIN_FRAME, audioFadesOf, TEXT_DECO_IDS, counterTarget } from '../core/project.js';
+import { updateClip, renameProject, setAspect, ASPECT_PRESETS, getDuration, clipEnd, canFrame, canFlip, MIN_FRAME, audioFadesOf, TEXT_DECO_IDS, counterTarget } from '../core/project.js';
 import { formatTimecode, formatDuration, clamp } from '../core/time.js';
 import { icon } from './icons.js';
 import { escapeHtml } from './dialogs.js';
@@ -355,11 +355,13 @@ export class Inspector {
   buildTransform() {
     const p = () => this.store.project;
     const s = this.section(_t('位置與大小'), `<button class="link-btn" data-reset>${icon('reset', 'icon-sm')}${_t('重設')}</button>`);
-    s.querySelector('[data-reset]').onclick = () => this.commit(() => ({ transform: { x: 0, y: 0, scale: 1, rotation: 0 } }), 'reset');
+    // 重設連翻轉一起取消（完整顯示、填滿、取消版型則保留翻轉）
+    s.querySelector('[data-reset]').onclick = () => this.commit(() => ({ transform: { x: 0, y: 0, scale: 1, rotation: 0, flipX: false, flipY: false } }), 'reset');
     s.appendChild(this.slider(_t('水平'), { min: () => -p().width, max: () => p().width, step: 1, unit: 'px', get: c => Math.round(c.transform.x), set: v => ({ transform: { x: v } }), key: 'x', hardMin: -1e5, hardMax: 1e5 }));
     s.appendChild(this.slider(_t('垂直'), { min: () => -p().height, max: () => p().height, step: 1, unit: 'px', get: c => Math.round(c.transform.y), set: v => ({ transform: { y: v } }), key: 'y', hardMin: -1e5, hardMax: 1e5 }));
     s.appendChild(this.slider(_t('縮放'), { min: 5, max: 400, step: 1, unit: '%', get: c => Math.round(c.transform.scale * 100), set: v => ({ transform: { scale: v / 100 } }), key: 'scale', hardMax: 1000 }));
     s.appendChild(this.slider(_t('旋轉'), { min: -180, max: 180, step: 1, unit: '°', get: c => Math.round(c.transform.rotation), set: v => ({ transform: { rotation: v } }), key: 'rot' }));
+    if (canFlip(this.store.selectedClip)) s.appendChild(this.flipRow());
     const acts = document.createElement('div');
     acts.className = 'chip-row';
     acts.style.marginTop = '4px';
@@ -428,11 +430,26 @@ export class Inspector {
     s.appendChild(this.row(_t('邊框色'), wrap, true));
 
     const v = this.section(_t('取景'), `<button class="link-btn" data-reset>${icon('reset', 'icon-sm')}${_t('重設')}</button>`);
-    v.querySelector('[data-reset]').onclick = () => this.commit(() => ({ transform: { x: 0, y: 0, scale: 1 } }), 'freset');
+    v.querySelector('[data-reset]').onclick = () => this.commit(() => ({ transform: { x: 0, y: 0, scale: 1, flipX: false, flipY: false } }), 'freset');
     v.appendChild(this.slider(_t('縮放'), { min: 100, max: 400, step: 1, unit: '%', get: c => Math.round(c.transform.scale * 100), set: v => ({ transform: { scale: v / 100 } }), key: 'scale', hardMin: 20, hardMax: 1000 }));
     v.appendChild(this.slider(_t('水平'), { min: () => -p().width / 2, max: () => p().width / 2, step: 1, unit: 'px', get: c => Math.round(c.transform.x), set: v => ({ transform: { x: v } }), key: 'x', hardMin: -1e5, hardMax: 1e5 }));
     v.appendChild(this.slider(_t('垂直'), { min: () => -p().height / 2, max: () => p().height / 2, step: 1, unit: 'px', get: c => Math.round(c.transform.y), set: v => ({ transform: { y: v } }), key: 'y', hardMin: -1e5, hardMax: 1e5 }));
+    v.appendChild(this.flipRow());
     v.insertAdjacentHTML('beforeend', `<p class="hint-line">${_t('影像會裁切填滿畫面框。在預覽上拖曳移動畫面框、拉角落調整大小；按住 <kbd>Alt</kbd> 拖曳或用滾輪調整框裡的取景。')}</p>`);
+  }
+
+  /** 左右 / 上下翻轉的開關（影片與圖片；「位置與大小」和「取景」共用） */
+  flipRow() {
+    const chips = document.createElement('div');
+    chips.className = 'chip-row';
+    chips.innerHTML = `<button class="chip" data-flip="x">${_t('左右翻轉')}</button><button class="chip" data-flip="y">${_t('上下翻轉')}</button>`;
+    const field = (b) => (b.dataset.flip === 'x' ? 'flipX' : 'flipY');
+    chips.onclick = (e) => {
+      const b = e.target.closest('[data-flip]');
+      if (b) this.commit(c => ({ transform: { [field(b)]: !c.transform[field(b)] } }), field(b));
+    };
+    this.bind(chips, c => chips.querySelectorAll('[data-flip]').forEach(b => b.classList.toggle('on', !!c.transform[field(b)])));
+    return this.row(_t('翻轉'), chips, true);
   }
 
   buildAppearance(clip) {
