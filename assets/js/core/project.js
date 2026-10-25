@@ -167,6 +167,19 @@ export function cleanFrame(f) {
 }
 
 // ============================================================
+// 翻轉（鏡像）
+// ============================================================
+// transform.flipX 左右翻轉、flipY 上下翻轉，以影像自己的中心鏡像；
+// 在畫面框裡也一樣，所以取景的拖曳方向不會反過來。文字不翻轉（字會變成反的）。
+export const canFlip = (c) => c?.type === 'video' || c?.type === 'image';
+
+/** 翻轉只能是 true / false；不能翻轉的片段一律 false（直接修改 c） */
+function cleanFlip(c) {
+  c.transform.flipX = c.transform.flipX === true && canFlip(c);
+  c.transform.flipY = c.transform.flipY === true && canFlip(c);
+}
+
+// ============================================================
 // 轉場（詳細的計算在 core/transitions.js）
 // ============================================================
 export const TRANSITION_TYPES = ['fade', 'black', 'white', 'blur', 'wipe', 'softwipe', 'push', 'pushup', 'iris', 'zoom'];
@@ -198,7 +211,7 @@ export function makeClip(type, fields = {}) {
     fadeIn: 0,
     fadeOut: 0,
     opacity: 1,
-    transform: { x: 0, y: 0, scale: 1, rotation: 0 },
+    transform: { x: 0, y: 0, scale: 1, rotation: 0, flipX: false, flipY: false },
     filters: { brightness: 100, contrast: 100, saturation: 100, blur: 0, grayscale: 0 },
     frame: null,
     audioFades: null,
@@ -211,6 +224,7 @@ export function makeClip(type, fields = {}) {
   if (audioFades && hasSeparateAudioFades(clip)) clip.audioFades = { in: Math.max(0, num(audioFades.in, 0)), out: Math.max(0, num(audioFades.out, 0)) };
   if (frame && canFrame(clip)) clip.frame = cleanFrame(frame);
   if (transform) Object.assign(clip.transform, transform);
+  cleanFlip(clip);
   if (filters) Object.assign(clip.filters, filters);
   if (text) Object.assign(clip.text, text);
   return clip;
@@ -611,6 +625,7 @@ export function updateClip(project, id, patch) {
     c.volume = clamp(Number(c.volume) || 0, 0, 2);
     c.transform.scale = clamp(Number(c.transform.scale) || 0.01, 0.01, 10);
     c.transform.rotation = ((Number(c.transform.rotation) || 0) % 360 + 540) % 360 - 180;
+    cleanFlip(c);
     c.filters.brightness = clamp(c.filters.brightness, 0, 200);
     c.filters.contrast = clamp(c.filters.contrast, 0, 200);
     c.filters.saturation = clamp(c.filters.saturation, 0, 200);
@@ -730,7 +745,10 @@ function sanitizeClip(c) {
     y: clamp(num(t.y, 0), -1e5, 1e5),
     scale: clamp(num(t.scale, 1), 0.01, 10),
     rotation: clamp(num(t.rotation, 0), -360, 360),
+    flipX: t.flipX,
+    flipY: t.flipY,
   };
+  cleanFlip(m);
   m.frame = canFrame(m) ? cleanFrame(c.frame) : null;
   m.transitionIn = canTransition(m) ? cleanTransition(c.transitionIn) : null;
   const af = c.audioFades;

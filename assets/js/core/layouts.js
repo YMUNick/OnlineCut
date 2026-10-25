@@ -86,15 +86,17 @@ export function layoutCandidates(project, selectedIds, t, slots) {
 
 /**
  * 套用版型。layoutId 為 'none' 時取消這些片段的畫面框。
- * 套用時取景重設（縮放 100%、置中）。
+ * 套用時取景重設（縮放 100%、置中）；翻轉保留（版型只管位置與大小，不管影像朝哪邊）。
  */
 export function applyLayout(project, clipIds, layoutId) {
   const clips = byTrackBottomFirst(project, clipIds.map(id => getClip(project, id)).filter(canFrame));
   if (!clips.length) return { project, applied: 0 };
   const identity = { x: 0, y: 0, scale: 1, rotation: 0 };
+  // 合併進原本的 transform（不是整個換掉），才不會弄丟翻轉
+  const place = (c, frame) => { c.frame = frame; Object.assign(c.transform, identity); };
   if (layoutId === 'none') {
     const next = produce(project, p => {
-      for (const c of clips) Object.assign(getClip(p, c.id), { frame: null, transform: { ...identity } });
+      for (const c of clips) place(getClip(p, c.id), null);
     });
     return { project: next, applied: clips.length };
   }
@@ -102,7 +104,7 @@ export function applyLayout(project, clipIds, layoutId) {
   if (!frames) return { project, applied: 0 };
   const n = Math.min(frames.length, clips.length);
   const next = produce(project, p => {
-    for (let i = 0; i < n; i++) Object.assign(getClip(p, clips[i].id), { frame: cleanFrame(frames[i]), transform: { ...identity } });
+    for (let i = 0; i < n; i++) place(getClip(p, clips[i].id), cleanFrame(frames[i]));
   });
   return { project: next, applied: n };
 }

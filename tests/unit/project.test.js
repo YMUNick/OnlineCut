@@ -644,3 +644,58 @@ describe('數字動畫（倒數 / 數字滾動）', () => {
     assert.deepEqual(u.clips[0].text.counter, { from: 2152, duration: 600, ease: 'out' });
   });
 });
+
+describe('翻轉（左右 / 上下鏡像）', () => {
+  test('預設不翻轉', () => {
+    const { clip } = P.addClip(setup(), 'video', { mediaId: 'mv' });
+    assert.equal(clip.transform.flipX, false);
+    assert.equal(clip.transform.flipY, false);
+    assert.equal(P.makeClip('text').transform.flipX, false);
+  });
+  test('影片與圖片可以翻轉，文字與音訊不行', () => {
+    assert.equal(P.canFlip(P.makeClip('video')), true);
+    assert.equal(P.canFlip(P.makeClip('image')), true);
+    assert.equal(P.canFlip(P.makeClip('text')), false);
+    assert.equal(P.canFlip(P.makeClip('audio')), false);
+  });
+  test('切換翻轉；不是 true 的值一律當成不翻轉', () => {
+    let { project, clip } = P.addClip(setup(), 'video', { mediaId: 'mv' });
+    project = P.updateClip(project, clip.id, { transform: { flipX: true } });
+    assert.deepEqual([P.getClip(project, clip.id).transform.flipX, P.getClip(project, clip.id).transform.flipY], [true, false]);
+    project = P.updateClip(project, clip.id, { transform: { flipY: true } });
+    assert.equal(P.getClip(project, clip.id).transform.flipY, true);
+    project = P.updateClip(project, clip.id, { transform: { flipX: 'yes', flipY: 1 } });
+    assert.deepEqual([P.getClip(project, clip.id).transform.flipX, P.getClip(project, clip.id).transform.flipY], [false, false]);
+  });
+  test('文字片段設了翻轉也不會翻', () => {
+    let { project, clip } = P.addClip(setup(), 'text', {});
+    project = P.updateClip(project, clip.id, { transform: { flipX: true, flipY: true } });
+    assert.deepEqual([P.getClip(project, clip.id).transform.flipX, P.getClip(project, clip.id).transform.flipY], [false, false]);
+  });
+  test('只改位置與大小（置中、完整顯示、填滿）時保留翻轉', () => {
+    let { project, clip } = P.addClip(setup(), 'image', { mediaId: 'mi' });
+    project = P.updateClip(project, clip.id, { transform: { flipX: true, flipY: true } });
+    project = P.updateClip(project, clip.id, { transform: { x: 0, y: 0, scale: 1, rotation: 0 } });
+    assert.deepEqual([P.getClip(project, clip.id).transform.flipX, P.getClip(project, clip.id).transform.flipY], [true, true]);
+  });
+  test('存讀保留翻轉；壞掉的值修正成不翻轉', () => {
+    let { project, clip } = P.addClip(setup(), 'video', { mediaId: 'mv' });
+    project = P.updateClip(project, clip.id, { transform: { flipX: true } });
+    assert.deepEqual(P.normalizeProject(JSON.parse(JSON.stringify(project))), project);
+    const raw = JSON.parse(JSON.stringify(project));
+    raw.clips[0].transform.flipX = 'junk';
+    raw.clips[0].transform.flipY = 1;
+    const n = P.normalizeProject(raw).clips[0].transform;
+    assert.deepEqual([n.flipX, n.flipY], [false, false]);
+  });
+  test('舊的專案（沒有翻轉欄位）讀進來是不翻轉；文字存了翻轉也會被拿掉', () => {
+    let { project } = P.addClip(setup(), 'video', { mediaId: 'mv' });
+    ({ project } = P.addClip(project, 'text', {}));
+    const raw = JSON.parse(JSON.stringify(project));
+    delete raw.clips[0].transform.flipX;
+    delete raw.clips[0].transform.flipY;
+    raw.clips[1].transform.flipX = true;
+    const n = P.normalizeProject(raw);
+    assert.deepEqual([n.clips[0].transform.flipX, n.clips[0].transform.flipY, n.clips[1].transform.flipX], [false, false, false]);
+  });
+});

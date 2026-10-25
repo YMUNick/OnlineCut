@@ -83,8 +83,18 @@ describe('套用版型', () => {
     let { p, main, cam, text } = twoCams();
     p = P.updateClip(p, cam.id, { transform: { x: 50, scale: 2, rotation: 30 } });
     const { project } = applyLayout(p, [main.id, cam.id, text.id], 'split-h');
-    assert.deepEqual(P.getClip(project, cam.id).transform, { x: 0, y: 0, scale: 1, rotation: 0 });
+    assert.deepEqual(P.getClip(project, cam.id).transform, { x: 0, y: 0, scale: 1, rotation: 0, flipX: false, flipY: false });
     assert.equal(P.getClip(project, text.id).frame, null);
+  });
+  test('套用與取消版型都保留翻轉（版型只管位置與大小）', () => {
+    let { p, main, cam } = twoCams();
+    p = P.updateClip(p, cam.id, { transform: { flipX: true, x: 50, scale: 2 } });
+    p = P.updateClip(p, main.id, { transform: { flipY: true } });
+    const on = applyLayout(p, [main.id, cam.id], 'split-h').project;
+    assert.deepEqual(P.getClip(on, cam.id).transform, { x: 0, y: 0, scale: 1, rotation: 0, flipX: true, flipY: false });
+    assert.equal(P.getClip(on, main.id).transform.flipY, true, '沒選到、被自動加入的那段也保留');
+    const off = applyLayout(on, [main.id, cam.id], 'none').project;
+    assert.deepEqual([P.getClip(off, cam.id).transform.flipX, P.getClip(off, main.id).transform.flipY], [true, true]);
   });
   test('格子比片段多：只套用有的', () => {
     const { p, main, cam } = twoCams();
