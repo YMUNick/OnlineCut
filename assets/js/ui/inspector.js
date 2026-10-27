@@ -9,6 +9,7 @@ import { _t } from '../i18n.js';
 import { FONTS, ensureFont } from './fonts.js';
 import { TRANSITION_TYPES, DEFAULT_TRANSITION, MIN_TRANSITION, MAX_TRANSITION, prevAdjacent, effectiveTransition } from '../core/transitions.js';
 import { TRANSITION_LABELS } from './transitions-panel.js';
+import { textSiblings, isTrackSynced, setTrackSynced, updateTextSynced, copyStyleToTrack } from './text-sync.js';
 
 const TYPE_LABEL = { video: _t('影片片段'), image: _t('圖片片段'), text: _t('文字片段'), audio: _t('音訊片段') };
 export const DECO_LABELS = {
@@ -69,7 +70,9 @@ export class Inspector {
   commit(fn, key) {
     const clip = this.store.selectedClip;
     if (!clip) return;
-    this.store.commit(updateClip(this.store.project, clip.id, fn(clip)), { key: `insp-${clip.id}-${key}` });
+    const p = this.store.project;
+    const next = clip.type === 'text' ? updateTextSynced(p, clip.id, fn(clip)) : updateClip(p, clip.id, fn(clip));
+    this.store.commit(next, { key: `insp-${clip.id}-${key}` });
   }
 
   refresh() {
@@ -193,6 +196,29 @@ export class Inspector {
   // ---------- 各區塊 ----------
   buildText() {
     const s = this.section(_t('文字'));
+    // 同一條軌有好幾段文字（例如 AI 字幕）：可以一起改樣式
+    const sync = document.createElement('div');
+    sync.className = 'text-sync';
+    sync.innerHTML = `<label class="check"><input type="checkbox"><span></span></label>
+      <button class="link-btn" type="button">${icon('copy', 'icon-sm')}${_t('把這段的樣式套用到整軌')}</button>
+      <p class="hint-line"></p>`;
+    const syncBox = sync.querySelector('input');
+    syncBox.onchange = () => { setTrackSynced(this.store.selectedClip.trackId, syncBox.checked); this.refresh(); };
+    sync.querySelector('button').onclick = () => {
+      const c = this.store.selectedClip;
+      this.store.commit(copyStyleToTrack(this.store.project, c.id));
+    };
+    this.bind(sync, (c, p) => {
+      const n = textSiblings(p, c).length;
+      sync.hidden = n === 0;
+      if (!n) return;
+      syncBox.checked = isTrackSynced(p, c);
+      sync.querySelector('span').textContent = _t('同時修改這條軌上的全部文字（共 {n} 段）', { n: n + 1 });
+      sync.querySelector('.hint-line').textContent = syncBox.checked
+        ? _t('字型、大小、顏色、背景、外框與位置會一起改；每段的文字內容和時間不變。')
+        : _t('只改這一段。勾選上面的選項，或按「把這段的樣式套用到整軌」讓其他段變成一樣。');
+    });
+    s.appendChild(sync);
     const ta = document.createElement('textarea');
     ta.className = 'textarea';
     ta.setAttribute('aria-label', _t('文字內容'));

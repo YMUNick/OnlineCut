@@ -633,3 +633,10 @@ html[lang="en"] .tab { font-size: 12.5px; }
 .ai-error { color: #ff8a73 !important; margin: 6px 0 0 !important; }
 .ai-progress { margin-top: 10px; }
 .export-row[hidden], .ai-key a[hidden], .ai-error[hidden] { display: none; }
+/* 整軌文字一起改 */
+.text-sync { display: grid; gap: 6px; margin-bottom: 12px; padding: 10px 12px; border-radius: var(--radius-sm); background: var(--accent-soft); border: 1px solid rgba(255,92,57,.35); }
+.text-sync[hidden] { display: none; }
+.text-sync .check { color: var(--text); font-weight: 600; align-items: flex-start; }
+.text-sync .check input { margin-top: 1px; flex: none; }
+.text-sync .link-btn { justify-self: start; }
+.text-sync .hint-line { margin: 0; }

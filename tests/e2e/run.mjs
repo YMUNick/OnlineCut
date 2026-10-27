@@ -1966,6 +1966,50 @@ try {
     assert.ok(caps[2].start > caps[1].start + 0.9 && caps[2].start < 3.5, `第三段 ${caps[2].start}`);
   });
 
+  await test('AI 字幕：整軌字幕一起改樣式（內容、時間不變）；可以關掉只改一段，再套用到整軌', async () => {
+    await setupFadeClip();
+    await mockSpeech('api.openai.com', () => ({ json: { text: '', segments: [
+      { start: 0.2, end: 1.2, text: '第一句' }, { start: 1.4, end: 2.4, text: '第二句' }, { start: 2.6, end: 3.6, text: '第三句' },
+    ] } }));
+    await openAi();
+    await page.selectOption('#aiProvider', 'openai'); // 上一個測試選了 Groq，會被記住
+    await page.fill('#aiKey', 'sk-test');
+    await page.click('[data-go]');
+    await page.waitForSelector('.export-done', { timeout: 15000 });
+    await page.click('[data-done]');
+    const caps = async () => (await state()).project.clips.filter(c => c.type === 'text').sort((a, b) => a.start - b.start);
+    const before = await caps();
+    assert.equal(before.length, 3, JSON.stringify((await state()).project.clips.map(c => [c.type, c.start, c.text?.content])));
+    await page.evaluate((id) => window.__oc.store.select([id]), before[1].id);
+    const box = page.locator('.text-sync input[type=checkbox]');
+    assert.equal(await box.isChecked(), true, '字幕軌預設整軌一起改');
+    assert.match(await page.textContent('.text-sync'), /共 3 段/);
+    // 顏色、位置一起改
+    await page.locator('.insp-section .field', { hasText: '顏色' }).locator('input[type=color]').first().evaluate((el) => { el.value = '#ffd23f'; el.dispatchEvent(new Event('input', { bubbles: true })); });
+    const y = page.locator('.field', { hasText: '垂直' }).locator('.num');
+    await y.fill('100');
+    await y.press('Enter');
+    let after = await caps();
+    assert.deepEqual(after.map(c => c.text.color), ['#ffd23f', '#ffd23f', '#ffd23f']);
+    assert.deepEqual(after.map(c => c.transform.y), [100, 100, 100]);
+    assert.deepEqual(after.map(c => c.text.content), ['第一句', '第二句', '第三句'], '內容不變');
+    assert.deepEqual(after.map(c => c.start), before.map(c => c.start), '時間不變');
+    // 關掉：只改這一段
+    await box.uncheck();
+    const size = page.locator('.field', { hasText: '字級' }).locator('.num');
+    await size.fill('90');
+    await size.press('Enter');
+    after = await caps();
+    assert.deepEqual(after.map(c => c.text.fontSize), [before[0].text.fontSize, 90, before[2].text.fontSize]);
+    await page.click('.text-sync .link-btn');
+    after = await caps();
+    assert.deepEqual(after.map(c => c.text.fontSize), [90, 90, 90], '套用到整軌');
+    assert.deepEqual(after.map(c => c.text.content), ['第一句', '第二句', '第三句']);
+    await page.keyboard.press('Control+z');
+    assert.deepEqual((await caps()).map(c => c.text.fontSize), [before[0].text.fontSize, 90, before[2].text.fontSize], '一次就能復原');
+    await box.check();
+  });
+
   console.log('\n英文版');
   /** 畫面上還看得到的中文（語言切換按鈕、使用者自己的內容除外） */
   const leftoverChinese = (pg) => pg.evaluate(() => {

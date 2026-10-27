@@ -5,6 +5,7 @@ import { hitTest } from '../engine/renderer.js';
 import { TextEditor } from './text-editor.js';
 import { clamp } from '../core/time.js';
 import { _t } from '../i18n.js';
+import { updateTextSynced } from './text-sync.js';
 
 const CENTER_SNAP_PX = 8;
 
@@ -170,7 +171,8 @@ export class Preview {
         else if (Math.abs(((a % 90) + 90) % 90) < 3 || Math.abs(((a % 90) + 90) % 90) > 87) a = Math.round(a / 90) * 90;
         patch = { transform: { rotation: a } };
       }
-      this.store.commit(updateClip(base, clip.id, patch), { key: `xf-${session}` });
+      // 字幕軌整軌同步時，拖曳一段字幕的位置、大小，其他段也一起動
+      this.store.commit(clip.type === 'text' ? updateTextSynced(base, clip.id, patch) : updateClip(base, clip.id, patch), { key: `xf-${session}` });
     };
     const up = () => {
       window.removeEventListener('pointermove', move);
@@ -253,6 +255,7 @@ export class Preview {
     clearTimeout(this.wheelTimer);
     this.wheelTimer = setTimeout(() => { this.wheelSession = null; }, 600);
     this.wheelSession ??= Math.random().toString(36).slice(2);
-    this.store.commit(updateClip(this.store.project, clip.id, { transform: { scale } }), { key: `wheel-${this.wheelSession}` });
+    const patch = { transform: { scale } };
+    this.store.commit(clip.type === 'text' ? updateTextSynced(this.store.project, clip.id, patch) : updateClip(this.store.project, clip.id, patch), { key: `wheel-${this.wheelSession}` });
   }
 }

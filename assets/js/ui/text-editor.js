@@ -1,12 +1,13 @@
 // 在預覽畫面上直接編輯文字：雙擊文字後出現輸入框（疊在文字的位置上）和一列小工具列
 // （字型、字級、粗體、斜體、顏色）。打字時即時更新，Esc、Ctrl + Enter 或點外面結束。
 
-import { getClip, getTrack, updateClip } from '../core/project.js';
+import { getClip, getTrack } from '../core/project.js';
 import { fontString, TEXT_LINE_HEIGHT } from '../engine/renderer.js';
 import { FONTS, ensureFont } from './fonts.js';
 import { parseColor } from './inspector.js';
 import { escapeHtml } from './dialogs.js';
 import { _t } from '../i18n.js';
+import { updateTextSynced } from './text-sync.js';
 
 export class TextEditor {
   constructor({ store, player, frame, getLayouts, getScale }) {
@@ -95,7 +96,7 @@ export class TextEditor {
   commit(patch, key) {
     const c = this.clip();
     if (!c) return;
-    this.store.commit(updateClip(this.store.project, c.id, { text: patch }), { key: `te-${this.state.session}-${key}` });
+    this.store.commit(updateTextSynced(this.store.project, c.id, { text: patch }), { key: `te-${this.state.session}-${key}` });
   }
 
   stop() {

@@ -158,7 +158,7 @@ export function openCaptionsDialog({ project, runtime, selection, onInsert }) {
         <div class="export-done">
           <div class="ok">${icon('check')}</div>
           <p style="margin:0 0 4px;color:var(--text);font-weight:600">${_t('已加入 {n} 段字幕', { n })}</p>
-          <p class="hint-line">${_t('字幕放在時間軸最上面新的「字幕」軌。點兩下預覽上的字幕可以直接修改；按 Ctrl+Z 可以整批復原。')}</p>
+          <p class="hint-line">${_t('字幕放在時間軸最上面新的「字幕」軌。點兩下預覽上的字幕可以直接修改；選取任一段改字型、顏色或位置，整軌字幕會一起變。按 Ctrl+Z 可以整批復原。')}</p>
         </div>`;
       footer.innerHTML = `<a class="ghost-btn" download="${escapeHtml(project.name || 'captions')}.srt" href="${srt}" data-srt>${icon('download')}${_t('下載 SRT 字幕檔')}</a><button class="primary-btn" data-done>${_t('完成')}</button>`;
       footer.querySelector('[data-done]').onclick = () => m.close();
