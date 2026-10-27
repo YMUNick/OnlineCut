@@ -640,3 +640,8 @@ html[lang="en"] .tab { font-size: 12.5px; }
 .text-sync .check input { margin-top: 1px; flex: none; }
 .text-sync .link-btn { justify-self: start; }
 .text-sync .hint-line { margin: 0; }
+.ai-card + .ai-card { margin-top: -6px; }
+.ai-card-sm { padding: 9px 14px; }
+.ai-card-sm .ai-card-icon { width: 28px; height: 28px; border-radius: 8px; background: #7b5cff; }
+.ai-opts { display: grid; gap: 8px; }
+.ai-title { margin: 6px 0 4px; text-align: left; }

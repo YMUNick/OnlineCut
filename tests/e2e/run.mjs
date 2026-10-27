@@ -67,6 +67,7 @@ async function makeFixtures(dir) {
     rotated: path.join(dir, 'phone.mp4'),
     red: path.join(dir, 'red.mp4'),
     blue: path.join(dir, 'blue.mp4'),
+    talk: path.join(dir, 'talk.mp4'),
   };
   ffmpeg(['-f', 'lavfi', '-i', 'testsrc2=size=640x360:rate=30:duration=4', '-f', 'lavfi', '-i', 'sine=frequency=440:duration=4', '-c:v', 'libx264', '-pix_fmt', 'yuv420p', '-c:a', 'aac', '-shortest', f.video]);
   ffmpeg(['-f', 'lavfi', '-i', 'testsrc2=size=360x640:rate=30:duration=3', '-f', 'lavfi', '-i', 'sine=frequency=660:duration=3', '-c:v', 'libx264', '-pix_fmt', 'yuv420p', '-c:a', 'aac', '-shortest', f.portrait]);
@@ -74,6 +75,8 @@ async function makeFixtures(dir) {
   ffmpeg(['-f', 'lavfi', '-i', 'sine=frequency=330:duration=5', '-c:a', 'libmp3lame', '-b:a', '96k', f.audio]);
   ffmpeg(['-f', 'lavfi', '-i', 'color=c=orange:size=800x600:duration=1', '-frames:v', '1', f.image]);
   // 雙畫面版型用：純紅、純藍兩支短片
+  // AI 短影音用：40 秒、前 20 秒紅色、後 20 秒藍色（很小的畫面，檔案很小）
+  ffmpeg(['-f', 'lavfi', '-i', 'color=red:s=320x180:r=10:d=20[a];color=blue:s=320x180:r=10:d=20[b];[a][b]concat=n=2:v=1:a=0', '-f', 'lavfi', '-i', 'sine=frequency=300:duration=40', '-c:v', 'libx264', '-pix_fmt', 'yuv420p', '-c:a', 'aac', '-b:a', '32k', '-shortest', f.talk]);
   for (const c of ['red', 'blue']) ffmpeg(['-f', 'lavfi', '-i', `color=c=${c}:size=640x360:rate=30:duration=2`, '-c:v', 'libx264', '-pix_fmt', 'yuv420p', f[c]]);
   // 模擬手機直拍：實際存的是橫的畫面（左紅右藍），加上旋轉 90° 的標記
   const plain = path.join(dir, 'plain.mp4');
@@ -2010,6 +2013,58 @@ try {
     await box.check();
   });
 
+  await test('AI 剪成短影音：辨識 → 語言模型挑精華（精華放開頭）→ 接成直式短片、加字幕；一次復原', async () => {
+    await newProjectUI();
+    await page.setInputFiles('#fileInput', [fx.talk]);
+    await waitFor(async () => (await state()).project.clips.length === 1, 10000, '匯入');
+    const calls = await mockSpeech('api.openai.com', (n, call) => {
+      if (call.url.endsWith('/audio/transcriptions')) return { json: { text: '', segments: [
+        { start: 1, end: 5, text: '大家好，今天來聊聊。' }, { start: 8, end: 14, text: '中間比較無聊的部分。' }, { start: 24, end: 30, text: '最精彩的是這個結果！' },
+      ] } };
+      return { json: { choices: [{ message: { content: '{"segments":[2,0],"title":"這個結果太驚人","reason":"先放結果再回頭說明。"}' } }] } };
+    });
+    await page.click('.tab[data-tab="text"]');
+    await page.click('#btnAiShort');
+    await page.waitForSelector('#aiLen');
+    assert.equal(await page.isChecked('#aiVertical'), true);
+    await page.selectOption('#aiProvider', 'openai');
+    await page.fill('#aiKey', 'sk-test');
+    await page.click('#aiLen [data-v="15"]');
+    await page.fill('#aiHint', '結果');
+    await page.click('[data-go]');
+    await page.waitForSelector('.export-done:has-text("已剪成")', { timeout: 20000 });
+    assert.equal(await page.inputValue('.ai-title input'), '這個結果太驚人');
+    // 語言模型的請求
+    const chat = calls.find(c => c.url.endsWith('/chat/completions'));
+    const req = JSON.parse(chat.text);
+    assert.equal(chat.auth, 'Bearer sk-test');
+    assert.equal(req.model, 'gpt-4o-mini');
+    assert.deepEqual(req.response_format, { type: 'json_object' });
+    assert.match(req.messages[0].content, /about 15 seconds/);
+    assert.match(req.messages[1].content, /\[2\] 24\.0-30\.0s 最精彩的是這個結果！/);
+    assert.match(req.messages[1].content, /What to focus on: 結果/);
+    await page.click('[data-done]');
+    // 新的時間軸
+    const p = (await state()).project;
+    assert.equal(p.aspect, '9:16');
+    const vids = p.clips.filter(c => c.type === 'video').sort((a, b) => a.start - b.start);
+    assert.equal(vids.length, 2);
+    assert.ok(Math.abs(vids[0].srcIn - 23.85) < 0.01 && Math.abs(vids[1].srcIn - 0.85) < 0.01, `素材入點 ${vids.map(c => c.srcIn)}`);
+    assert.ok(Math.abs(vids[1].start - vids[0].duration) < 1e-6, '接在一起');
+    const len = Math.max(...p.clips.map(c => c.start + c.duration));
+    assert.ok(Math.abs(len - 10.6) < 0.05, `長度 ${len}`);
+    const caps = p.clips.filter(c => c.type === 'text').sort((a, b) => a.start - b.start);
+    assert.deepEqual(caps.map(c => c.text.content), ['最精彩的是這個結果！', '大家好，今天來聊聊']);
+    // 匯出：開頭是精華（藍色）、填滿直式畫面；後面接回開場（紅色）
+    const at = await exportedColors('short', 1);
+    assert.equal(at(0.1, 0.1), 'blue', '填滿畫面，角落也是影片');
+    assert.equal((await exportedColors('short2', 8))(0.5, 0.3), 'red');
+    await page.keyboard.press('Control+z');
+    const back = (await state()).project;
+    assert.equal(back.aspect, '16:9', '一次就能復原');
+    assert.equal(back.clips.length, 1);
+  });
+
   console.log('\n英文版');
   /** 畫面上還看得到的中文（語言切換按鈕、使用者自己的內容除外） */
   const leftoverChinese = (pg) => pg.evaluate(() => {
@@ -2076,6 +2131,10 @@ try {
     await pg.waitForSelector('#aiKey');
     assert.equal(await pg.inputValue('#aiLang'), '', '英文介面預設自動偵測語言');
     await check('AI 字幕對話框');
+    await pg.keyboard.press('Escape');
+    await pg.click('#btnAiShort');
+    await pg.waitForSelector('#aiLen');
+    await check('AI 短影音對話框');
     await pg.keyboard.press('Escape');
     for (const type of ['image', 'text', 'audio']) {
       await pg.evaluate((type) => window.__oc.store.select([window.__oc.store.project.clips.find(c => c.type === type).id]), type);

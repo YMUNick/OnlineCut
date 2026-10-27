@@ -7,9 +7,9 @@ import { AudioSources, mixChunks } from './audio.js';
 import { _t } from '../i18n.js';
 
 export const PROVIDERS = {
-  openai: { label: 'OpenAI', base: 'https://api.openai.com/v1', model: 'whisper-1', keyUrl: 'https://platform.openai.com/api-keys' },
-  groq: { label: 'Groq', base: 'https://api.groq.com/openai/v1', model: 'whisper-large-v3-turbo', keyUrl: 'https://console.groq.com/keys' },
-  custom: { label: _t('自訂'), base: '', model: 'whisper-1', keyUrl: null },
+  openai: { label: 'OpenAI', base: 'https://api.openai.com/v1', model: 'whisper-1', chatModel: 'gpt-4o-mini', keyUrl: 'https://platform.openai.com/api-keys' },
+  groq: { label: 'Groq', base: 'https://api.groq.com/openai/v1', model: 'whisper-large-v3-turbo', chatModel: 'llama-3.3-70b-versatile', keyUrl: 'https://console.groq.com/keys' },
+  custom: { label: _t('自訂'), base: '', model: 'whisper-1', chatModel: 'gpt-4o-mini', keyUrl: null },
 };
 
 export const transcribeSettings = {
@@ -154,4 +154,38 @@ export async function transcribe({ project, runtime, clipIds, base, apiKey, mode
   if (!heard) throw new TranscribeError(unreadable ? _t('讀不到聲音：{reason}', { reason: unreadable }) : _t('選取的範圍裡沒有聲音。'));
   onProgress({ stage: 'upload', done: part, total: part });
   return segments.sort((x, y) => x.start - y.start);
+}
+
+/** 呼叫 OpenAI 相容的 /chat/completions，要求回傳 JSON，回傳模型的文字 */
+export async function chatJSON({ base, apiKey, model, messages, signal }) {
+  const send = async (jsonMode) => {
+    let res;
+    try {
+      res = await fetch(`${base.replace(/\/+$/, '')}/chat/completions`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${apiKey}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ model, messages, temperature: 0.3, ...(jsonMode ? { response_format: { type: 'json_object' } } : {}) }),
+        signal,
+      });
+    } catch (e) {
+      if (e.name === 'AbortError') throw e;
+      throw new TranscribeError(_t('連不上 AI 服務，請檢查網路與 API 網址。'));
+    }
+    if (!res.ok) {
+      let detail = '';
+      try { const j = await res.json(); detail = j?.error?.message || j?.message || ''; } catch { /* 不是 JSON */ }
+      throw new TranscribeError(detail, res.status);
+    }
+    const j = await res.json();
+    return j?.choices?.[0]?.message?.content ?? '';
+  };
+  try {
+    return await send(true);
+  } catch (e) {
+    // 不支援 JSON 模式的模型：改用一般模式（提示裡已經要求只回 JSON）
+    if (e instanceof TranscribeError && e.status === 400 && /response_format|json/i.test(e.message)) {
+      try { return await send(false); } catch (e2) { throw friendlyError(e2); }
+    }
+    throw friendlyError(e);
+  }
 }

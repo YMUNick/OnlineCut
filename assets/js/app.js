@@ -13,6 +13,8 @@ import { ensureProjectFonts } from './ui/fonts.js';
 import { LayoutPanel, GraphicsPanel } from './ui/extras-panel.js';
 import { TransitionsPanel, TRANSITION_LABELS } from './ui/transitions-panel.js';
 import { openCaptionsDialog } from './ui/captions-dialog.js';
+import { extractRanges, remapSegments } from './core/shorts.js';
+import { buildCaptions, lineUnitsFor } from './core/captions.js';
 import { formatTimecode, clamp } from './core/time.js';
 import { Store } from './state.js';
 import { store as db, storageSettings } from './media/store.js';
@@ -115,6 +117,7 @@ const transitionsPanel = new TransitionsPanel({
 });
 document.querySelector('.tab[data-tab="transitions"]').addEventListener('click', () => transitionsPanel.render());
 $('btnAiCaptions').addEventListener('click', () => openAiCaptions());
+$('btnAiShort').addEventListener('click', () => openAiCaptions('short'));
 
 const inspector = new Inspector({
   store, runtime,
@@ -135,7 +138,7 @@ window.__oc = {
   addGraphic: (id) => addGraphic(id),
   applyLayout: (id) => applyLayoutAction(id),
   applyTransition: (type, duration) => applyTransition(type, duration),
-  openAiCaptions: () => openAiCaptions(),
+  openAiCaptions: (mode) => openAiCaptions(mode),
   /** 模擬關掉再開啟：放掉所有素材，從瀏覽器儲存重新載入 */
   simulateRestart: async () => { player.destroy(); runtime.releaseAll(); pendingHandles.length = 0; await loadSaved(); },
 };
@@ -536,35 +539,49 @@ function removeTransition() {
 // AI 字幕
 // ============================================================
 
-function openAiCaptions() {
+function openAiCaptions(mode = 'captions') {
   const p = store.project;
   if (!p.clips.some(c => c.type === 'video' || c.type === 'audio')) {
-    toast(_t('先匯入有聲音的影片或音訊，再產生字幕。'));
+    toast(mode === 'short' ? _t('先匯入有人說話的影片，再剪成短影音。') : _t('先匯入有聲音的影片或音訊，再產生字幕。'));
     return;
   }
   player.pause();
-  openCaptionsDialog({ project: p, runtime, selection: store.selection, onInsert: insertCaptions });
+  openCaptionsDialog({ project: p, runtime, selection: store.selection, mode, onInsert: insertCaptions, onShort: applyShort });
 }
 
-/** 把字幕放到最上面新的「字幕」軌（一次復原就能全部拿掉） */
-function insertCaptions(captions) {
-  let p = addTrack(store.project, 'video');
+/** 把字幕放到最上面新的「字幕」軌，回傳新的專案 */
+function withCaptionTrack(project, captions) {
+  let p = addTrack(project, 'video');
   const track = p.tracks[0];
   p = updateTrack(p, track.id, { name: _t('字幕') });
   const W = p.width, H = p.height;
   const fontSize = Math.round(Math.min(W, H) * 0.052);
-  const ids = [];
   for (const c of captions) {
-    const r = addClip(p, 'text', {
+    p = addClip(p, 'text', {
       trackId: track.id, start: c.start, duration: c.end - c.start, name: _t('字幕'),
       text: { content: c.text, fontSize, fontWeight: 700, color: '#ffffff', background: 'rgba(0, 0, 0, 0.6)', shadow: false },
       transform: { y: Math.round(H / 2 - H * 0.13) },
-    });
-    p = r.project;
-    ids.push(r.clip.id);
+    }).project;
+  }
+  return p;
+}
+
+/** 一次加入全部字幕（一次復原就能全部拿掉），回傳段數 */
+function insertCaptions(captions) {
+  store.commit(withCaptionTrack(store.project, captions), { select: [] });
+  return captions.length;
+}
+
+/** AI 剪短影音：只留挑出來的範圍、接起來；可以換成直式並加上字幕（一次復原） */
+function applyShort({ ranges, segments, vertical, captions, keepMusic }) {
+  let p = extractRanges(store.project, ranges, { keepMusic, aspect: vertical ? '9:16' : null, fill: vertical });
+  if (captions) {
+    const lineUnits = lineUnitsFor(p.width, Math.round(Math.min(p.width, p.height) * 0.052));
+    p = withCaptionTrack(p, buildCaptions(remapSegments(segments, ranges), { lineUnits }));
   }
   store.commit(p, { select: [] });
-  return ids.length;
+  player.seek(0);
+  timeline.fit?.();
 }
 
 /** 加入內建圖案：背景放最下面，貼圖和邊框放最上面 */
