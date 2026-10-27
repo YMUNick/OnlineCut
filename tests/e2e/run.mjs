@@ -1832,6 +1832,140 @@ try {
     assert.deepEqual(errors.slice(errBefore), [], '沒有 JS 錯誤');
   });
 
+  console.log('\nAI 字幕（模擬語音辨識服務）');
+  const CORS = { 'access-control-allow-origin': '*', 'access-control-allow-headers': '*', 'access-control-allow-methods': 'POST, OPTIONS' };
+  /** 攔截語音辨識 API：reply(第幾次, 請求內容) 回傳 { status, json } */
+  async function mockSpeech(host, reply) {
+    const calls = [];
+    await page.unroute(`https://${host}/**`).catch(() => {});
+    await page.route(`https://${host}/**`, async (route) => {
+      const req = route.request();
+      if (req.method() === 'OPTIONS') return route.fulfill({ status: 204, headers: CORS });
+      const body = req.postDataBuffer() || Buffer.alloc(0);
+      const call = { url: req.url(), auth: req.headers().authorization, body, text: body.toString('utf8') };
+      calls.push(call);
+      const { status = 200, json } = reply(calls.length, call);
+      await route.fulfill({ status, headers: CORS, contentType: 'application/json', body: JSON.stringify(json) });
+    });
+    return calls;
+  }
+  const field = (body, name) => body.match(new RegExp(`name="${name.replace(/[[\]]/g, '\\$&')}"\\r\\n\\r\\n([^\\r]*)`))?.[1];
+  const openAi = async () => {
+    await page.click('.tab[data-tab="text"]');
+    await page.click('#btnAiCaptions');
+    await page.waitForSelector('#aiKey');
+  };
+
+  await test('AI 字幕：設定 API Key、辨識後一句一段放到新的字幕軌；可以下載 SRT、一次復原', async () => {
+    await page.evaluate(() => localStorage.removeItem('onlinecut.ai'));
+    await setupFadeClip();
+    const calls = await mockSpeech('api.openai.com', () => ({ json: { text: '', segments: [
+      { start: 0.2, end: 1.8, text: '大家好，歡迎來到 OnlineCut。', no_speech_prob: 0.01, avg_logprob: -0.2 },
+      { start: 2, end: 3.8, text: '這是一段很長很長很長很長很長很長很長很長很長很長很長很長的字幕會自動切開', no_speech_prob: 0.01, avg_logprob: -0.3 },
+      { start: 3.8, end: 3.95, text: '謝謝觀看', no_speech_prob: 0.95, avg_logprob: -1.5 },
+    ] } }));
+    await openAi();
+    assert.equal(await page.inputValue('#aiProvider'), 'openai');
+    assert.equal(await page.inputValue('#aiLang'), 'zh', '中文介面預設繁體中文');
+    assert.match(await page.textContent('#aiPrivacy'), /OpenAI/);
+    await page.click('[data-go]');
+    assert.match(await page.textContent('#aiError'), /請輸入 API Key/);
+    await page.fill('#aiKey', 'sk-test-123');
+    await page.click('[data-go]');
+    await page.waitForSelector('.export-done:has-text("已加入")', { timeout: 15000 });
+    // 請求內容
+    assert.equal(calls.length, 1);
+    const c = calls[0];
+    assert.equal(c.url, 'https://api.openai.com/v1/audio/transcriptions');
+    assert.equal(c.auth, 'Bearer sk-test-123');
+    assert.equal(field(c.text, 'model'), 'whisper-1');
+    assert.equal(field(c.text, 'response_format'), 'verbose_json');
+    assert.equal(field(c.text, 'language'), 'zh');
+    const wav = c.body.indexOf('RIFF');
+    assert.ok(wav > 0, '送出 WAV');
+    assert.equal(c.body.readUInt32LE(wav + 24), 16000, '16kHz');
+    const seconds = c.body.readUInt32LE(wav + 40) / 2 / 16000;
+    assert.ok(Math.abs(seconds - 4) < 0.1, `聲音長度 ${seconds}`);
+    // 時間軸
+    const p = (await state()).project;
+    const track = p.tracks[0];
+    assert.equal(track.name, '字幕');
+    const caps = p.clips.filter(x => x.trackId === track.id).sort((a, b) => a.start - b.start);
+    assert.equal(caps.length, 2, `字幕段數 ${caps.length}`);
+    assert.equal(caps[1].text.content.split('\n').length, 2, '長句換成兩行');
+    assert.ok(Math.abs(caps[0].start - 0.2) < 0.01);
+    assert.equal(caps[0].text.content, '大家好，歡迎來到 OnlineCut');
+    assert.ok(caps.every(x => x.type === 'text' && x.transform.y > 0), '在畫面下方');
+    assert.ok(!caps.some(x => x.text.content.includes('謝謝觀看')), '過濾掉安靜時的幻聽');
+    assert.ok(caps.every(x => x.text.content.split('\n').every(l => [...l].length <= 18)), '每行不會太長');
+    // SRT
+    const [download] = await Promise.all([page.waitForEvent('download'), page.click('[data-srt]')]);
+    const srtFile = path.join(tmp, 'captions.srt');
+    await download.saveAs(srtFile);
+    const srt = (await import('node:fs')).readFileSync(srtFile, 'utf8');
+    assert.match(srt, /^1\n00:00:00,200 --> 00:00:01,\d{3}\n大家好，歡迎來到 OnlineCut\n/);
+    await page.click('[data-done]');
+    // 記住設定；一次復原
+    assert.equal(JSON.parse(await page.evaluate(() => localStorage.getItem('onlinecut.ai'))).apiKey, 'sk-test-123');
+    await page.keyboard.press('Control+z');
+    assert.equal((await state()).project.clips.filter(x => x.type === 'text').length, 0, '一次就能復原');
+    await openAi();
+    assert.equal(await page.inputValue('#aiKey'), 'sk-test-123', '再次開啟時帶入 API Key');
+    await page.keyboard.press('Escape');
+  });
+
+  await test('AI 字幕：API Key 錯誤時顯示原因，可以修改後重試；不記住時不存 Key', async () => {
+    await setupFadeClip();
+    let ok = false;
+    const calls = await mockSpeech('api.openai.com', () => ok
+      ? { json: { text: 'Hello there.', segments: [{ start: 0.5, end: 2, text: 'Hello there.' }] } }
+      : { status: 401, json: { error: { message: 'Incorrect API key provided.' } } });
+    await openAi();
+    await page.fill('#aiKey', 'sk-wrong');
+    await page.uncheck('#aiRemember');
+    await page.click('[data-go]');
+    await page.waitForFunction(() => !document.getElementById('aiError').hidden, null, { timeout: 15000 });
+    assert.match(await page.textContent('#aiError'), /API Key 不正確或已失效/);
+    assert.equal(await page.isEnabled('#aiKey'), true, '可以修改');
+    assert.equal(JSON.parse(await page.evaluate(() => localStorage.getItem('onlinecut.ai'))).apiKey, undefined, '不記住');
+    ok = true;
+    await page.fill('#aiKey', 'sk-right');
+    await page.selectOption('#aiLang', 'en');
+    await page.click('[data-go]');
+    await page.waitForSelector('.export-done:has-text("已加入 1 段字幕")', { timeout: 15000 });
+    assert.equal(calls.length, 2);
+    assert.equal(field(calls[1].text, 'language'), 'en');
+    assert.equal(field(calls[1].text, 'prompt'), undefined, '英文不加中文提示');
+    await page.click('[data-done]');
+    assert.equal((await state()).project.clips.find(x => x.type === 'text').text.content, 'Hello there.');
+  });
+
+  await test('AI 字幕：長的聲音分段上傳，時間接得起來；可以改用 Groq', async () => {
+    await setupFadeClip();
+    await page.evaluate(async () => { (await import('./assets/js/engine/transcribe.js')).transcribeSettings.uploadSeconds = 1.5; });
+    const calls = await mockSpeech('api.groq.com', (n) => ({ json: { text: `第${n}段`, segments: [{ start: 0.1, end: 0.9, text: `第${n}段` }] } }));
+    try {
+      await openAi();
+      await page.selectOption('#aiProvider', 'groq');
+      assert.match(await page.textContent('#aiPrivacy'), /Groq/);
+      assert.match(await page.getAttribute('#aiKeyLink', 'href'), /console\.groq\.com/);
+      await page.fill('#aiKey', 'gsk-test');
+      await page.click('[data-go]');
+      await page.waitForSelector('.export-done', { timeout: 15000 });
+      await page.click('[data-done]');
+    } finally {
+      await page.evaluate(async () => { (await import('./assets/js/engine/transcribe.js')).transcribeSettings.uploadSeconds = 600; });
+    }
+    assert.equal(calls.length, 3, '4 秒的聲音、每段最長 1.5 秒 → 3 段');
+    assert.ok(calls.every(c => c.url === 'https://api.groq.com/openai/v1/audio/transcriptions' && field(c.text, 'model') === 'whisper-large-v3-turbo'));
+    assert.match(field(calls[1].text, 'prompt') || '', /第1段/, '把前一段的文字當提示，讓斷句接得起來');
+    const caps = (await state()).project.clips.filter(x => x.type === 'text').sort((a, b) => a.start - b.start);
+    assert.deepEqual(caps.map(x => x.text.content), ['第1段', '第2段', '第3段']);
+    assert.ok(Math.abs(caps[0].start - 0.1) < 0.01);
+    assert.ok(caps[1].start > 1.0 && caps[1].start < 1.7, `第二段 ${caps[1].start}`);
+    assert.ok(caps[2].start > caps[1].start + 0.9 && caps[2].start < 3.5, `第三段 ${caps[2].start}`);
+  });
+
   console.log('\n英文版');
   /** 畫面上還看得到的中文（語言切換按鈕、使用者自己的內容除外） */
   const leftoverChinese = (pg) => pg.evaluate(() => {
@@ -1893,6 +2027,12 @@ try {
     assert.equal(await pg.evaluate(() => window.__oc.store.project.name), 'My first video');
     await check('範例專案');
     for (const tab of ['text', 'graphics', 'layout', 'transitions', 'media']) { await pg.click(`.tab[data-tab="${tab}"]`); await check(`${tab} 分頁`); }
+    await pg.click('.tab[data-tab="text"]');
+    await pg.click('#btnAiCaptions');
+    await pg.waitForSelector('#aiKey');
+    assert.equal(await pg.inputValue('#aiLang'), '', '英文介面預設自動偵測語言');
+    await check('AI 字幕對話框');
+    await pg.keyboard.press('Escape');
     for (const type of ['image', 'text', 'audio']) {
       await pg.evaluate((type) => window.__oc.store.select([window.__oc.store.project.clips.find(c => c.type === type).id]), type);
       await check(`${type} 屬性`);

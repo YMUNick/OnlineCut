@@ -3,7 +3,7 @@
 import {
   createProject, normalizeProject, addMedia, removeMedia, addClip, deleteClips, splitAtPlayhead,
   duplicateClip, getDuration, setAspect, ASPECT_PRESETS, addTrack, renameProject, DEFAULT_TEXT_DURATION,
-  DEFAULT_IMAGE_DURATION, getClip, getTrack, splitClip, placeClip, updateClip,
+  DEFAULT_IMAGE_DURATION, getClip, getTrack, splitClip, placeClip, updateClip, updateTrack,
 } from './core/project.js';
 import { prevAdjacent, nextAdjacent, canTransition } from './core/transitions.js';
 import { LAYOUTS, layoutFrames, layoutCandidates, applyLayout } from './core/layouts.js';
@@ -12,6 +12,7 @@ import { textBox, textOuter, clearTextMeasureCache } from './engine/renderer.js'
 import { ensureProjectFonts } from './ui/fonts.js';
 import { LayoutPanel, GraphicsPanel } from './ui/extras-panel.js';
 import { TransitionsPanel, TRANSITION_LABELS } from './ui/transitions-panel.js';
+import { openCaptionsDialog } from './ui/captions-dialog.js';
 import { formatTimecode, clamp } from './core/time.js';
 import { Store } from './state.js';
 import { store as db, storageSettings } from './media/store.js';
@@ -113,6 +114,7 @@ const transitionsPanel = new TransitionsPanel({
   onRemove: () => removeTransition(),
 });
 document.querySelector('.tab[data-tab="transitions"]').addEventListener('click', () => transitionsPanel.render());
+$('btnAiCaptions').addEventListener('click', () => openAiCaptions());
 
 const inspector = new Inspector({
   store, runtime,
@@ -133,6 +135,7 @@ window.__oc = {
   addGraphic: (id) => addGraphic(id),
   applyLayout: (id) => applyLayoutAction(id),
   applyTransition: (type, duration) => applyTransition(type, duration),
+  openAiCaptions: () => openAiCaptions(),
   /** 模擬關掉再開啟：放掉所有素材，從瀏覽器儲存重新載入 */
   simulateRestart: async () => { player.destroy(); runtime.releaseAll(); pendingHandles.length = 0; await loadSaved(); },
 };
@@ -527,6 +530,41 @@ function removeTransition() {
   if (!target?.transitionIn) { toast(_t('這個接點沒有轉場')); return; }
   store.commit(updateClip(store.project, target.id, { transitionIn: null }));
   toast(_t('已移除轉場'), undoAction());
+}
+
+// ============================================================
+// AI 字幕
+// ============================================================
+
+function openAiCaptions() {
+  const p = store.project;
+  if (!p.clips.some(c => c.type === 'video' || c.type === 'audio')) {
+    toast(_t('先匯入有聲音的影片或音訊，再產生字幕。'));
+    return;
+  }
+  player.pause();
+  openCaptionsDialog({ project: p, runtime, selection: store.selection, onInsert: insertCaptions });
+}
+
+/** 把字幕放到最上面新的「字幕」軌（一次復原就能全部拿掉） */
+function insertCaptions(captions) {
+  let p = addTrack(store.project, 'video');
+  const track = p.tracks[0];
+  p = updateTrack(p, track.id, { name: _t('字幕') });
+  const W = p.width, H = p.height;
+  const fontSize = Math.round(Math.min(W, H) * 0.052);
+  const ids = [];
+  for (const c of captions) {
+    const r = addClip(p, 'text', {
+      trackId: track.id, start: c.start, duration: c.end - c.start, name: _t('字幕'),
+      text: { content: c.text, fontSize, fontWeight: 700, color: '#ffffff', background: 'rgba(0, 0, 0, 0.6)', shadow: false },
+      transform: { y: Math.round(H / 2 - H * 0.13) },
+    });
+    p = r.project;
+    ids.push(r.clip.id);
+  }
+  store.commit(p, { select: [] });
+  return ids.length;
 }
 
 /** 加入內建圖案：背景放最下面，貼圖和邊框放最上面 */

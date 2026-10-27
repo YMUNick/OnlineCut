@@ -124,17 +124,17 @@ export class AudioSources {
 }
 
 /**
- * 依序產生混好的聲音，每段 audioSettings.chunkSeconds 秒。
+ * 依序產生混好的聲音，每段 audioSettings.chunkSeconds 秒（從時間軸 start 秒開始，到 duration 秒）。
  * onWarning(mediaId, reason)：有片段的聲音讀不到時呼叫（不會默默變成沒聲音）
  */
-export async function* mixChunks(project, sources, duration, { sampleRate = 48000, signal, onWarning = () => {} } = {}) {
+export async function* mixChunks(project, sources, duration, { sampleRate = 48000, signal, onWarning = () => {}, start = 0, channels = 2 } = {}) {
   const chunk = Math.max(0.5, audioSettings.chunkSeconds);
   const warned = new Set();
   const total = Math.max(1, Math.round(duration * sampleRate));
-  for (let i0 = 0; i0 < total;) {
+  for (let i0 = Math.min(total - 1, Math.max(0, Math.round(start * sampleRate))); i0 < total;) {
     const i1 = Math.min(total, i0 + Math.round(chunk * sampleRate));
     const w0 = i0 / sampleRate, w1 = i1 / sampleRate;
-    const ctx = new OfflineAudioContext(2, i1 - i0, sampleRate);
+    const ctx = new OfflineAudioContext(channels, i1 - i0, sampleRate);
     for (const piece of audioPlan(project, w0, w1)) {
       if (signal?.aborted) throw Object.assign(new Error(_t('已取消匯出')), { name: 'AbortError' });
       const id = piece.clip.mediaId;

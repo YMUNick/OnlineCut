@@ -96,8 +96,12 @@ describe('英文版', () => {
   test('畫面上的中文都有用 _t() 包起來', () => {
     const missing = [];
     for (const f of files) {
-      for (const lit of scanLiterals(readFileSync(f, 'utf8'))) {
+      const src = readFileSync(f, 'utf8');
+      const lines = src.split('\n');
+      for (const lit of scanLiterals(src)) {
         if (!CJK.test(lit.text)) continue;
+        // 刻意不翻譯的（例如語言的原文名稱、送給 AI 的提示）在同一行標註 i18n-ignore
+        if (lines[lit.line - 1]?.includes('i18n-ignore')) continue;
         if (lit.kind === 'str' && lit.wrapped) continue;
         if (lit.kind === 'tpl' && !lit.interp && lit.wrapped) continue;
         missing.push(`${path.relative(ROOT, f)}:${lit.line}  ${lit.raw.slice(0, 80).replace(/\s+/g, ' ')}`);

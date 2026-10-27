@@ -41,6 +41,7 @@ Most online editors make you **upload gigabytes of footage**, **sign up**, and t
 | 🔤 **Titles & captions** | **Double-click any text in the preview to retype it** and change font, size, weight and color in place. 15 one-click styles (neon, variety show, handwritten, movie subtitle, typewriter…), 11 fonts, outline, shadow, glow and 17 shape styles. |
 | ⬛ **Solid screens & countdowns** | Insert a black, white or any-color screen at the playhead (later clips move back). Make any number roll in, e.g. 2152 → 2132, slowing down as it lands. |
 | 🔀 **Transitions** | 10 transitions between back-to-back clips: dissolve, dip to black, flash to white, blur, wipe, soft gradient wipe, push, push up, circle reveal and zoom. Apply to one cut or every cut in one click, then set the length. |
+| 🤖 **AI auto captions** | Bring your own API key (OpenAI Whisper, Groq or any OpenAI-compatible endpoint) and turn speech into editable captions on their own track, split into readable lines. Long videos are sent in parts. Download as `.srt` too. |
 | 🎛️ **Filters, speed & fades** | Brightness, contrast, saturation, B&W and blur with presets; 0.25×–4× speed; volume up to 200%; fades you drag right on the timeline, with separate audio fades for video clips (e.g. let the music fade out while the picture stays). |
 | 📐 **Any aspect ratio** | 16:9, 9:16 (Reels / Shorts / TikTok), 1:1 and 4:5. Portrait footage switches the canvas automatically. |
 | 📦 **Frame-accurate MP4 export** | H.264 + AAC up to 1080p 60 fps, rendered frame by frame with WebCodecs, usually faster than real time. |
@@ -79,7 +80,7 @@ Then open <http://localhost:8080>. WebCodecs only works in a secure context (`ht
 
 OnlineCut is a purely static site with **no backend**. Imported files, edits and exports are processed by your browser and never uploaded anywhere. Projects are stored only in your browser's IndexedDB.
 
-The only external request is Google Fonts (Noto Sans / Serif TC) for the interface and text styles.
+The only external request is Google Fonts (Noto Sans / Serif TC) for the interface and text styles. The one exception is **AI captions**, which you start yourself: the audio (never the video) goes straight from your browser to the speech-to-text provider you pick, with your own API key. Nothing goes through an OnlineCut server. The key is saved only in your browser, and only if you tick “Remember”.
 
 ## ⚙️ How export works
 
