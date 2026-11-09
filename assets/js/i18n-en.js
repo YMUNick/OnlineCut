@@ -495,7 +495,9 @@ export default {
   '音量': 'Volume',
   '靜音這個片段': 'Mute this clip',
   '速度': 'Speed',
-  '變速會改變片段長度；放慢時如果撞到後面的片段會自動截短。': 'Changing speed changes the clip length. When slowed down, it’s trimmed if it would run into the next clip.',
+  '變速會改變片段長度，後面緊接著的片段會跟著往前或往後移。5× 以上就是縮時效果。': 'Changing speed changes the clip length, and clips right after it move along. 5× and up gives a time-lapse.',
+  '縮時的聲音會又快又尖，通常會關掉。': 'Sped-up audio sounds squeaky, so time-lapses are usually muted.',
+  '套用到選取的 {n} 段影片 / 音訊。': { one: 'Applies to the {n} selected video / audio clip.', other: 'Applies to the {n} selected video / audio clips.' },
   '{name} 數值': '{name} value',
 
   // ---------- ui/media-panel ----------

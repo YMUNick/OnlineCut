@@ -8,7 +8,7 @@ import { _t } from '../i18n.js';
 
 export const PROJECT_VERSION = 1;
 export const MIN_SPEED = 0.25;
-export const MAX_SPEED = 4;
+export const MAX_SPEED = 100; // 縮時攝影用（預覽超過瀏覽器能播的速度時改成逐格跳）
 export const DEFAULT_IMAGE_DURATION = 5;
 export const DEFAULT_TEXT_DURATION = 4;
 
@@ -619,14 +619,20 @@ export function updateClip(project, id, patch) {
     if (c.text) c.text.fontSize = clamp(Number(c.text.fontSize) || 12, 8, 600);
 
     if (speed != null && (c.type === 'video' || c.type === 'audio')) {
-      // 變速：保留同一段素材，片段長度跟著變；若後面撞到其他片段則截短
+      // 變速：保留同一段素材，片段長度跟著變。
+      // 後面緊接著其他片段時（中間沒有空隙），後面的片段一起往前 / 往後移，不會留下空白或被截短；
+      // 中間有空隙時，放慢撞到後面的片段才截短。
       const s = clamp(Number(speed) || 1, MIN_SPEED, MAX_SPEED);
-      const nextStart = clipsOnTrack(p, c.trackId, [c.id]).filter(n => n.start >= c.start).reduce((m, n) => Math.min(m, n.start), Infinity);
-      const duration = Math.min(sourceSpan(c) / s, nextStart - c.start);
+      const after = clipsOnTrack(p, c.trackId, [c.id]).filter(n => n.start >= c.start);
+      const nextStart = after.reduce((m, n) => Math.min(m, n.start), Infinity);
+      const packed = Math.abs(nextStart - clipEnd(c)) < 1e-3;
+      const duration = packed ? sourceSpan(c) / s : Math.min(sourceSpan(c) / s, nextStart - c.start);
       // 變速後短到不到一格就不套用（例如只有一格的片段再加速）
       if (duration >= 1 / p.fps - 1e-9) {
+        const delta = duration - c.duration;
         c.speed = s;
         c.duration = duration;
+        if (packed) for (const n of after) n.start = Math.max(0, n.start + delta);
       }
     }
     clampFades(c);

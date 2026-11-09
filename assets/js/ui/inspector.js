@@ -1,6 +1,6 @@
 // 右側屬性面板：專案設定 / 片段屬性
 
-import { updateClip, renameProject, setAspect, ASPECT_PRESETS, getDuration, clipEnd, canFrame, MIN_FRAME, audioFadesOf, TEXT_DECO_IDS, counterTarget } from '../core/project.js';
+import { updateClip, getClip, renameProject, setAspect, ASPECT_PRESETS, getDuration, clipEnd, canFrame, MIN_FRAME, MIN_SPEED, MAX_SPEED, audioFadesOf, TEXT_DECO_IDS, counterTarget } from '../core/project.js';
 import { formatTimecode, formatDuration, clamp } from '../core/time.js';
 import { icon } from './icons.js';
 import { escapeHtml } from './dialogs.js';
@@ -18,6 +18,12 @@ export const DECO_LABELS = {
   cloud: _t('思考泡泡'), shout: _t('大喊框'), stamp: _t('印章'), tape: _t('紙膠帶'),
   neon: _t('霓虹燈牌'), arrow: _t('指示牌'), quote: _t('金句框'), caution: _t('警示牌'),
 };
+/** 速度按鈕：慢動作、一般、加速，後面三個是縮時 */
+export const SPEED_PRESETS = [0.5, 1, 1.5, 2, 5, 10, 20, 50];
+export const formatSpeed = (v) => `${+Number(v).toFixed(2)}×`;
+/** 速度取到好讀的值：2 倍以下到 0.05、10 倍以下到 0.1、更快取整數 */
+const roundSpeed = (v) => (v < 2 ? Math.round(v * 20) / 20 : v < 10 ? Math.round(v * 10) / 10 : Math.round(v));
+
 const FILTER_PRESETS = [
   [_t('原始'), { brightness: 100, contrast: 100, saturation: 100, grayscale: 0, blur: 0 }],
   [_t('鮮豔'), { brightness: 104, contrast: 112, saturation: 140, grayscale: 0, blur: 0 }],
@@ -130,6 +136,25 @@ export class Inspector {
     s.insertAdjacentHTML('beforeend', `<p class="hint-line" style="margin-top:0">${_t('一起拖曳可以同時移動。按 Delete 全部刪除，Shift + 點擊可加選或取消。')}</p>
       <div class="insp-actions" style="margin-top:12px"><button class="ghost-btn" data-a="remove">${icon('trash', 'icon-sm')}${_t('全部刪除')}</button></div>`);
     s.querySelector('[data-a]').onclick = () => this.actions.remove();
+    // 一次調整多段影片 / 音訊的速度（例如整段旅行影片都變縮時）
+    const media = () => this.store.selection.map(id => getClip(this.store.project, id)).filter(c => c && (c.type === 'video' || c.type === 'audio'));
+    if (media().length) {
+      const sp = this.section(_t('速度'));
+      const chips = document.createElement('div');
+      chips.className = 'chip-row';
+      chips.innerHTML = SPEED_PRESETS.map(v => `<button class="chip" data-v="${v}">${formatSpeed(v)}</button>`).join('');
+      chips.onclick = (e) => {
+        const v = e.target.closest('[data-v]')?.dataset.v;
+        if (!v) return;
+        // 由前往後套用：前面的片段變短時，後面緊接著的片段會先補位
+        const list = media().sort((a, b) => a.start - b.start);
+        let p = this.store.project;
+        for (const c of list) p = updateClip(p, c.id, { speed: +v });
+        this.store.commit(p);
+      };
+      sp.appendChild(chips);
+      sp.insertAdjacentHTML('beforeend', `<p class="hint-line">${_t('套用到選取的 {n} 段影片 / 音訊。', { n: media().length })}</p>`);
+    }
   }
 
   buildProject() {
@@ -557,15 +582,26 @@ export class Inspector {
     s.appendChild(this.row('', lbl, true));
     if (clip.type === 'video' && item?.hasAudio !== false) this.buildAudioFades(s);
 
-    const speeds = [0.5, 1, 1.5, 2];
     const chips = document.createElement('div');
-    chips.className = 'chip-row';
-    chips.innerHTML = speeds.map(v => `<button class="chip" data-v="${v}">${v}×</button>`).join('');
+    chips.className = 'chip-row speed-chips';
+    chips.innerHTML = SPEED_PRESETS.map(v => `<button class="chip${v >= 5 ? ' fast' : ''}" data-v="${v}">${formatSpeed(v)}</button>`).join('');
     chips.onclick = (e) => { const v = e.target.closest('[data-v]')?.dataset.v; if (v) this.commit(() => ({ speed: +v }), 'speedChip'); };
     this.bind(chips, c => chips.querySelectorAll('.chip').forEach(b => b.classList.toggle('on', +b.dataset.v === c.speed)));
     s.appendChild(this.row(_t('速度'), chips, true));
-    s.appendChild(this.slider('', { min: 25, max: 400, step: 5, unit: '%', get: c => Math.round(c.speed * 100), set: v => ({ speed: v / 100 }), key: 'speed' }));
-    s.insertAdjacentHTML('beforeend', `<p class="hint-line">${_t('變速會改變片段長度；放慢時如果撞到後面的片段會自動截短。')}</p>`);
+    s.appendChild(this.slider('', {
+      min: MIN_SPEED, max: MAX_SPEED, log: true, round: roundSpeed, format: formatSpeed, reset: 1,
+      get: c => c.speed, set: v => ({ speed: v }), key: 'speed',
+    }));
+    // 縮時：聲音通常又快又尖，提供一鍵靜音
+    if (clip.type === 'video' && item?.hasAudio !== false) {
+      const tl = document.createElement('p');
+      tl.className = 'hint-line speed-mute';
+      tl.innerHTML = `<span>${_t('縮時的聲音會又快又尖，通常會關掉。')}</span><button class="link-btn" type="button">${icon('volumeOff', 'icon-sm')}${_t('靜音')}</button>`;
+      tl.querySelector('button').onclick = () => this.commit(() => ({ muted: true }), 'mute');
+      this.bind(tl, c => { tl.hidden = !(c.speed >= 4 && !c.muted); });
+      s.appendChild(tl);
+    }
+    s.insertAdjacentHTML('beforeend', `<p class="hint-line">${_t('變速會改變片段長度，後面緊接著的片段會跟著往前或往後移。5× 以上就是縮時效果。')}</p>`);
   }
 
   // ---------- 小元件 ----------
@@ -592,7 +628,7 @@ export class Inspector {
   }
 
   /** 滑桿 + 數字輸入 */
-  slider(label, { min, max, step, unit = '', decimals = 0, get, set, key, disabled, hardMin, hardMax, reset }) {
+  slider(label, { min, max, step, unit = '', decimals = 0, get, set, key, disabled, hardMin, hardMax, reset, log = false, round = (v) => v, format = null }) {
     const r = document.createElement('div');
     r.className = 'field';
     const id = `f_${Math.random().toString(36).slice(2, 8)}`;
@@ -600,7 +636,12 @@ export class Inspector {
     const range = r.querySelector('input[type=range]');
     const num = r.querySelector('.num');
     const val = (f) => (typeof f === 'function' ? f(this.store.selectedClip) : f);
-    range.step = step;
+    // log：滑桿位置是對數刻度（例如速度 0.25×–100×，慢速那一端也調得細）
+    const LOG_STEPS = 1000;
+    const toRange = (v) => (log ? (LOG_STEPS * Math.log(v / val(min))) / Math.log(val(max) / val(min)) : v);
+    const fromRange = (r) => (log ? round(val(min) * Math.pow(val(max) / val(min), r / LOG_STEPS)) : r);
+    const show = (v) => (format ? format(v) : Number(v).toFixed(decimals) + unit);
+    range.step = log ? 1 : step;
     const paint = () => {
       const pct = ((+range.value - +range.min) / ((+range.max - +range.min) || 1)) * 100;
       range.style.setProperty('--fill', `${pct}%`);
@@ -611,25 +652,27 @@ export class Inspector {
       if (!isFinite(v)) return;
       this.commit((c) => set(v, c), key);
     };
-    range.addEventListener('input', () => { paint(); num.value = (+range.value).toFixed(decimals) + unit; apply(range.value); });
+    range.addEventListener('input', () => { paint(); const v = fromRange(+range.value); num.value = show(v); apply(v); });
     num.addEventListener('change', () => apply(parseFloat(num.value)));
     num.addEventListener('keydown', (e) => {
       if (e.key === 'Enter') num.blur();
       if (e.key === 'ArrowUp' || e.key === 'ArrowDown') {
         e.preventDefault();
-        const d = (e.key === 'ArrowUp' ? 1 : -1) * step * (e.shiftKey ? 10 : 1);
-        apply(parseFloat(num.value) + d);
+        const cur = parseFloat(num.value);
+        // 對數刻度：每按一下乘或除 1.1 倍
+        if (log) apply(round(cur * Math.pow(e.key === 'ArrowUp' ? 1.1 : 1 / 1.1, e.shiftKey ? 5 : 1)));
+        else apply(cur + (e.key === 'ArrowUp' ? 1 : -1) * step * (e.shiftKey ? 10 : 1));
       }
     });
     num.addEventListener('focus', () => num.select());
     range.addEventListener('dblclick', () => apply(reset != null ? reset : key === 'scale' ? 100 : key === 'opacity' || key === 'vol' ? 100 : key === 'speed' ? 100 : ['br', 'ct', 'sat'].includes(key) ? 100 : 0));
     this.bind(range, (c) => {
       if (!c) return;
-      range.min = val(min);
-      range.max = val(max);
+      range.min = log ? 0 : val(min);
+      range.max = log ? LOG_STEPS : val(max);
       const v = get(c);
-      if (document.activeElement !== range) range.value = v;
-      if (document.activeElement !== num) num.value = Number(v).toFixed(decimals) + unit;
+      if (document.activeElement !== range) range.value = toRange(v);
+      if (document.activeElement !== num) num.value = show(v);
       const dis = disabled ? disabled(c) : false;
       range.disabled = dis;
       num.disabled = dis;

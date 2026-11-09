@@ -311,20 +311,37 @@ describe('updateClip', () => {
     const c = P.getClip(project, clip.id);
     assert.deepEqual([c.start, c.type, c.duration], [0, 'video', 10]);
   });
-  test('變速範圍 0.25–4', () => {
+  test('變速範圍 0.25–100（縮時）', () => {
     let { project, clip } = P.addClip(setup(), 'video', { mediaId: 'mv' });
-    project = P.updateClip(project, clip.id, { speed: 100 });
-    assert.equal(P.getClip(project, clip.id).speed, 4);
-    assert.equal(P.getClip(project, clip.id).duration, 2.5);
+    project = P.updateClip(project, clip.id, { speed: 10 });
+    assert.equal(P.getClip(project, clip.id).speed, 10);
+    assert.equal(P.getClip(project, clip.id).duration, 1);
+    project = P.updateClip(project, clip.id, { speed: 1000 });
+    assert.equal(P.getClip(project, clip.id).speed, 100);
+    near(P.getClip(project, clip.id).duration, 0.1);
     project = P.updateClip(project, clip.id, { speed: 0 });
     assert.equal(P.getClip(project, clip.id).speed, 1); // 0 視為無效，回到 1
   });
-  test('放慢時撞到後面的片段會截短', () => {
-    let p = setup(), a;
+  test('後面緊接著的片段跟著移動：加速往前補位、放慢往後推，可以來回', () => {
+    let p = setup(), a, b, c;
     ({ project: p, clip: a } = P.addClip(p, 'video', { mediaId: 'mv' }));
-    ({ project: p } = P.addClip(p, 'video', { mediaId: 'mv' })); // 10–20
+    ({ project: p, clip: b } = P.addClip(p, 'video', { mediaId: 'mv' })); // 10–20
+    ({ project: p, clip: c } = P.addClip(p, 'video', { mediaId: 'mv' })); // 20–30
+    p = P.updateClip(p, a.id, { speed: 5 });
+    assert.deepEqual([a, b, c].map(x => [P.getClip(p, x.id).start, P.getClip(p, x.id).duration]), [[0, 2], [2, 10], [12, 10]]);
     p = P.updateClip(p, a.id, { speed: 0.5 });
-    assert.equal(P.getClip(p, a.id).duration, 10);
+    assert.deepEqual([a, b, c].map(x => [P.getClip(p, x.id).start, P.getClip(p, x.id).duration]), [[0, 20], [20, 10], [30, 10]]);
+    p = P.updateClip(p, a.id, { speed: 1 });
+    assert.deepEqual([a, b, c].map(x => P.getClip(p, x.id).start), [0, 10, 20], '回到原本的位置');
+  });
+  test('中間有空隙：加速留下空隙；放慢撞到後面的片段會截短', () => {
+    let p = setup(), a, b;
+    ({ project: p, clip: a } = P.addClip(p, 'video', { mediaId: 'mv' }));
+    ({ project: p, clip: b } = P.addClip(p, 'video', { mediaId: 'mv', start: 12 })); // 12–22
+    p = P.updateClip(p, a.id, { speed: 2 });
+    assert.deepEqual([P.getClip(p, a.id).duration, P.getClip(p, b.id).start], [5, 12]);
+    p = P.updateClip(p, a.id, { speed: 0.5 });
+    assert.deepEqual([P.getClip(p, a.id).duration, P.getClip(p, b.id).start], [12, 12]);
   });
   test('圖片不支援變速', () => {
     let { project, clip } = P.addClip(setup(), 'image', { mediaId: 'mi' });

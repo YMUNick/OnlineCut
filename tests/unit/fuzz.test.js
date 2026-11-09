@@ -105,7 +105,7 @@ function randomStep(p, r) {
     case 5: return clip ? P.splitClip(p, clip.id, clip.start + r() * clip.duration * 1.2).project : p;
     case 6: return P.splitAtPlayhead(p, t, r() < 0.5 && clip ? [clip.id] : []).project;
     case 7: return clip ? P.deleteClips(p, [clip.id], { ripple: r() < 0.5 }) : p;
-    case 8: return clip ? P.updateClip(p, clip.id, { speed: pick([0.25, 0.5, 1, 1.3, 2, 4, 9, -1, NaN]), fadeIn: r() * 5, fadeOut: r() * 5 }) : p;
+    case 8: return clip ? P.updateClip(p, clip.id, { speed: pick([0.25, 0.5, 1, 1.3, 2, 4, 9, 10, 50, 100, 500, -1, NaN]), fadeIn: r() * 5, fadeOut: r() * 5 }) : p;
     case 9: return clip ? P.duplicateClip(p, clip.id).project : p;
     case 11: {
       const id = pick([...LAYOUTS.map(l => l.id), 'none', 'bogus']);

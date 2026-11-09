@@ -645,3 +645,10 @@ html[lang="en"] .tab { font-size: 12.5px; }
 .ai-card-sm .ai-card-icon { width: 28px; height: 28px; border-radius: 8px; background: #7b5cff; }
 .ai-opts { display: grid; gap: 8px; }
 .ai-title { margin: 6px 0 4px; text-align: left; }
+/* 速度：5× 以上是縮時 */
+.speed-chips .chip.fast { border-style: dashed; }
+.speed-chips .chip.fast.on { border-style: solid; }
+.speed-mute { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin: 2px 0 6px; padding: 6px 10px; border-radius: var(--radius-sm); background: var(--panel-2); }
+.speed-mute[hidden] { display: none; }
+.speed-mute .link-btn { display: inline-flex; align-items: center; gap: 4px; flex: none; padding: 2px 0; }
+.clip-label .speed.fast { background: var(--accent); color: #fff; }

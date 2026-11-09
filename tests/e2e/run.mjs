@@ -1835,6 +1835,94 @@ try {
     assert.deepEqual(errors.slice(errBefore), [], '沒有 JS 錯誤');
   });
 
+  console.log('\n縮時（高倍速）');
+  /** 新專案：talk（40 秒，前 20 秒紅、後 20 秒藍）接著 blue（2 秒），緊緊排在 V1 */
+  async function setupTimelapse() {
+    await newProjectUI();
+    await page.setInputFiles('#fileInput', [fx.talk, fx.red]);
+    await waitFor(async () => (await state()).project.clips.length === 2, 10000, '匯入');
+    const p = (await state()).project;
+    const by = (n) => p.clips.find(c => p.media[c.mediaId].name === n);
+    return { talk: by('talk.mp4'), red: by('red.mp4') };
+  }
+  const clipNow = async (id) => (await state()).project.clips.find(c => c.id === id);
+
+  await test('縮時：按 10× 片段變成 1/10 長，後面的片段自動補位；一鍵靜音；匯出畫面跟素材時間對得上', async () => {
+    const { talk, red } = await setupTimelapse();
+    assert.ok(Math.abs(red.start - talk.duration) < 0.05, '一開始緊接著');
+    await page.evaluate((id) => window.__oc.store.select([id]), talk.id);
+    await page.click('.speed-chips [data-v="10"]');
+    let t = await clipNow(talk.id);
+    assert.equal(t.speed, 10);
+    assert.ok(Math.abs(t.duration - talk.duration / 10) < 0.01, `長度 ${t.duration}`);
+    assert.ok(Math.abs((await clipNow(red.id)).start - t.duration) < 1e-6, '後面的片段往前補位');
+    assert.match(await page.textContent(`.clip[data-clip-id="${talk.id}"] .speed.fast`), /10×/);
+    // 一鍵靜音
+    assert.equal(await page.isVisible('.speed-mute'), true);
+    await page.click('.speed-mute button');
+    assert.equal((await clipNow(talk.id)).muted, true);
+    assert.equal(await page.isVisible('.speed-mute'), false);
+    // 匯出：第 1 秒是素材第 10 秒（紅）、第 3 秒是素材第 30 秒（藍），之後接 red
+    assert.equal((await exportedColors('tl-a', 1))(0.5, 0.5), 'red');
+    assert.equal((await exportedColors('tl-b', 3))(0.5, 0.5), 'blue');
+    assert.equal((await exportedColors('tl-c', 4.5))(0.5, 0.5), 'red');
+    // 預覽：停在第 2.5 秒是藍色
+    await page.evaluate(() => window.__oc.player.seek(2.5));
+    await page.waitForTimeout(800);
+    const px = await page.evaluate(() => { const c = document.getElementById('previewCanvas'); return Array.from(c.getContext('2d').getImageData(c.width / 2, c.height / 2, 1, 1).data); });
+    assert.ok(px[2] > 150 && px[0] < 100, `預覽藍色 ${px}`);
+    await page.keyboard.press('Control+z');
+    await page.keyboard.press('Control+z');
+    assert.equal((await clipNow(talk.id)).speed, 1, '復原');
+    assert.ok(Math.abs((await clipNow(red.id)).start - talk.duration) < 0.05, '後面的片段回到原位');
+  });
+
+  await test('縮時：滑桿是對數刻度，可以輸入 50×；超過瀏覽器播放速度也能預覽播放；有聲音也能匯出', async () => {
+    const { talk } = await setupTimelapse();
+    await page.evaluate((id) => window.__oc.store.select([id]), talk.id);
+    const num = page.locator('.speed-chips').locator('xpath=../following-sibling::div[1]').locator('.num');
+    await num.fill('50');
+    await num.press('Enter');
+    const t = await clipNow(talk.id);
+    assert.equal(t.speed, 50);
+    assert.equal(await num.inputValue(), '50×');
+    const pos = await page.locator('.speed-chips').locator('xpath=../following-sibling::div[1]').locator('input[type=range]').evaluate(el => +el.value / +el.max);
+    assert.ok(Math.abs(pos - Math.log(50 / 0.25) / Math.log(100 / 0.25)) < 0.01, `對數刻度位置 ${pos}`);
+    // 50× 超過 <video> 能播的 16×：播放時改成逐格跳，時間照樣往前、沒有錯誤
+    const errBefore = errors.length;
+    await page.evaluate(() => { window.__oc.player.seek(0); window.__oc.player.play(); });
+    await page.waitForTimeout(600);
+    const st = await page.evaluate(() => { const { player } = window.__oc; const el = [...player.elements.values()][0]?.el; return { time: player.time, rate: el?.playbackRate, paused: el?.paused }; });
+    await page.evaluate(() => window.__oc.player.pause());
+    assert.ok(st.time > 0.3, `播放時間 ${st.time}`);
+    assert.equal(st.paused, true, '逐格跳（元素不自己播）');
+    assert.deepEqual(errors.slice(errBefore), []);
+    // 匯出（含 50 倍速的聲音）：長度 = 40/50 + 2
+    const res = await page.evaluate(async () => {
+      const { exportVideo } = await import('./assets/js/engine/exporter.js');
+      const out = await exportVideo({ project: window.__oc.store.project, runtime: window.__oc.runtime, settings: { short: 360 } });
+      return Array.from(new Uint8Array(await out.blob.arrayBuffer()));
+    });
+    const file = path.join(tmp, 'tl50.mp4');
+    (await import('node:fs')).writeFileSync(file, Buffer.from(res));
+    const info = probe(file);
+    assert.ok(Math.abs(parseFloat(info.format.duration) - 2.8) < 0.15, `長度 ${info.format.duration}`);
+    assert.ok(info.streams.some(s => s.codec_type === 'audio'), '有聲音');
+  });
+
+  await test('縮時：多選後一次套用速度，緊接著的片段依序補位', async () => {
+    const { talk, red } = await setupTimelapse();
+    await page.evaluate((ids) => window.__oc.store.select(ids), [talk.id, red.id]);
+    await page.click('.inspector .chip[data-v="2"]');
+    const [a, b] = [await clipNow(talk.id), await clipNow(red.id)];
+    assert.deepEqual([a.speed, b.speed], [2, 2]);
+    assert.ok(Math.abs(a.duration - talk.duration / 2) < 0.01);
+    assert.ok(Math.abs(b.start - a.duration) < 1e-6, '緊接著');
+    assert.ok(Math.abs(b.duration - red.duration / 2) < 0.01);
+    await page.keyboard.press('Control+z');
+    assert.equal((await clipNow(talk.id)).speed, 1, '一次復原');
+  });
+
   console.log('\nAI 字幕（模擬語音辨識服務）');
   const CORS = { 'access-control-allow-origin': '*', 'access-control-allow-headers': '*', 'access-control-allow-methods': 'POST, OPTIONS' };
   /** 攔截語音辨識 API：reply(第幾次, 請求內容) 回傳 { status, json } */

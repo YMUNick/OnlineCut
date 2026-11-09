@@ -170,7 +170,8 @@ export class Timeline {
       ain.title = _t('拖曳調整聲音淡入（只有聲音）');
       aout.title = _t('拖曳調整聲音淡出（只有聲音）');
       const label = c.type === 'text' ? (c.text.content.split('\n')[0] || _t('文字')) : (c.name || p.media[c.mediaId]?.name || c.type);
-      const speed = c.speed !== 1 ? `<span class="speed">${c.speed}×</span>` : '';
+      // 5× 以上是縮時：標記顯眼一點
+      const speed = c.speed !== 1 ? `<span class="speed${c.speed >= 5 ? ' fast' : ''}">${+c.speed.toFixed(2)}×</span>` : '';
       const muted = c.muted ? icon('volumeOff') : '';
       el.querySelector('.clip-label').innerHTML = `${icon(TYPE_ICON[c.type])}<span>${escapeHtml(label)}</span>${speed}${muted}`;
       el.title = label;

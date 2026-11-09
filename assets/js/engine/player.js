@@ -9,6 +9,7 @@ import { drawFrame } from './renderer.js';
 const DRIFT_TOLERANCE = 0.2;   // 播放時影片與時間軸差超過這麼多秒才重新對齊
 const PRELOAD_AHEAD = 2;       // 提前幾秒準備即將出現的片段
 const MAX_ELEMENTS = 16;       // 同時保留的媒體元素上限
+const MAX_ELEMENT_RATE = 16;   // 瀏覽器 <video> 能播的最快速度；更快的縮時片段改成逐格跳
 
 export class Player {
   constructor({ canvas, runtime, getProject, onTime, onState, onFrame, silent = false }) {
@@ -188,13 +189,18 @@ export class Player {
       const inRange = t >= clip.start && t < clipEnd(clip);
       const target = visualSourceTime(p, clip, t);
       const frozen = Math.abs(target - sourceTime(clip, t)) > 1e-3;
-      if (el.playbackRate !== clip.speed) el.playbackRate = clip.speed;
-      this.setGain(rec, inRange ? clipGainAt(p, clip, t) : 0);
-      if (frozen) {
+      const rate = Math.min(clip.speed, MAX_ELEMENT_RATE);
+      if (el.playbackRate !== rate) try { el.playbackRate = rate; } catch { /* 瀏覽器不支援這個速度 */ }
+      // 太快的縮時：不讓元素自己播，每一格跳到該顯示的位置（沒有聲音）
+      const stepped = clip.speed > MAX_ELEMENT_RATE || el.playbackRate !== rate;
+      this.setGain(rec, inRange && !stepped ? clipGainAt(p, clip, t) : 0);
+      if (frozen || (stepped && this.playing)) {
         if (!el.paused) el.pause();
-        if (Math.abs(el.currentTime - target) > 0.5 / p.fps) el.currentTime = target;
+        const step = stepped ? (clip.speed / p.fps) * 0.5 : 0.5 / p.fps;
+        if (!el.seeking && Math.abs(el.currentTime - target) > step) el.currentTime = target;
       } else if (this.playing) {
-        if (force || el.paused || Math.abs(el.currentTime - target) > DRIFT_TOLERANCE) {
+        // 容許的誤差以時間軸計算：加速時素材時間的誤差也跟著放大，才不會一直重新定位
+        if (force || el.paused || Math.abs(el.currentTime - target) > DRIFT_TOLERANCE * Math.max(1, clip.speed)) {
           if (Math.abs(el.currentTime - target) > 0.05) el.currentTime = target;
         }
         if (el.paused) el.play().catch(() => {});

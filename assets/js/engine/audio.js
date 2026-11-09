@@ -128,7 +128,9 @@ export class AudioSources {
  * onWarning(mediaId, reason)：有片段的聲音讀不到時呼叫（不會默默變成沒聲音）
  */
 export async function* mixChunks(project, sources, duration, { sampleRate = 48000, signal, onWarning = () => {}, start = 0, channels = 2 } = {}) {
-  const chunk = Math.max(0.5, audioSettings.chunkSeconds);
+  // 加速很多的片段（縮時）每段要解碼的素材是時間軸的好幾倍，段落縮短讓記憶體用量維持差不多
+  const maxSpeed = audibleClips(project).reduce((m, c) => Math.max(m, c.speed), 1);
+  const chunk = Math.max(0.5, audioSettings.chunkSeconds * Math.min(1, 4 / maxSpeed));
   const warned = new Set();
   const total = Math.max(1, Math.round(duration * sampleRate));
   for (let i0 = Math.min(total - 1, Math.max(0, Math.round(start * sampleRate))); i0 < total;) {
