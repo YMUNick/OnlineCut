@@ -58,12 +58,21 @@ describe('AI 字幕：切字幕', () => {
 
   test('去掉安靜時的幻聽與空白段落', () => {
     const out = C.cleanSegments([
-      { text: '真的有說話', no_speech_prob: 0.1, avg_logprob: -0.3 },
-      { text: '謝謝觀看', no_speech_prob: 0.9, avg_logprob: -1.4 },
-      { text: '   ' },
-      { text: '啊啊啊啊啊啊啊啊', compression_ratio: 3.1 },
+      { start: 0, end: 1, text: '真的有說話', no_speech_prob: 0.1, avg_logprob: -0.3 },
+      { start: 1, end: 2, text: '謝謝觀看', no_speech_prob: 0.9, avg_logprob: -1.4 },
+      { start: 2, end: 3, text: '   ' },
+      { start: 3, end: 4, text: '啊啊啊啊啊啊啊啊', compression_ratio: 3.1 },
     ]);
     assert.deepEqual(out.map(s => s.text), ['真的有說話']);
+  });
+
+  test('服務回傳的壞資料不會出錯：文字不是字串、時間不是數字或顛倒', () => {
+    const out = C.cleanSegments([
+      { start: 0, end: 1, text: 42 }, null, { start: NaN, end: 1, text: 'a' }, { start: 2, end: 1, text: 'b' },
+      { start: '0', end: 1, text: 'c' }, { start: 0, end: 1, text: { x: 1 } }, { start: 1, end: 2, text: '好的' },
+    ]);
+    assert.deepEqual(out.map(s => s.text), ['好的']);
+    assert.deepEqual(C.buildCaptions([{ start: 0, end: 1 }, { start: 1, end: Infinity, text: 'x' }]), [], 'buildCaptions 也不會出錯');
   });
 
   test('只有文字時依句子平均分配時間', () => {

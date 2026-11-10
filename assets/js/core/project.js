@@ -82,7 +82,27 @@ export function defaultText() {
     decoColor2: '#1b1440',
     glow: '',               // 發光顏色（霓虹字），'' 表示不發光
     counter: null,          // 數字動畫：{ from, duration, ease }，見 counterText()
+    anim: null,             // 文字動畫：{ in, out, loop, duration }，見 core/text-anim.js
   };
+}
+
+// ============================================================
+// 文字動畫：進場、出場（同一組效果，出場是進場倒著播）與持續的動態
+// ============================================================
+export const TEXT_ANIMS = ['fade', 'pop', 'slideUp', 'slideLeft', 'zoom', 'drop', 'blur', 'typewriter'];
+export const TEXT_LOOPS = ['pulse', 'shake', 'float', 'swing', 'blink', 'rainbow'];
+export const DEFAULT_TEXT_ANIM_DURATION = 0.6;
+
+/** 文字動畫：不認識的效果拿掉；什麼效果都沒有時回傳 null */
+export function cleanTextAnim(a) {
+  if (!a || typeof a !== 'object' || Array.isArray(a)) return null;
+  const out = {
+    in: TEXT_ANIMS.includes(a.in) ? a.in : '',
+    out: TEXT_ANIMS.includes(a.out) ? a.out : '',
+    loop: TEXT_LOOPS.includes(a.loop) ? a.loop : '',
+    duration: clamp(typeof a.duration === 'number' && isFinite(a.duration) ? a.duration : DEFAULT_TEXT_ANIM_DURATION, 0.1, 5),
+  };
+  return out.in || out.out || out.loop ? out : null;
 }
 
 // ============================================================
@@ -169,7 +189,8 @@ export function cleanFrame(f) {
 // ============================================================
 // 轉場（詳細的計算在 core/transitions.js）
 // ============================================================
-export const TRANSITION_TYPES = ['fade', 'black', 'white', 'blur', 'wipe', 'softwipe', 'push', 'pushup', 'iris', 'zoom'];
+export const TRANSITION_TYPES = ['fade', 'black', 'white', 'blur', 'wipe', 'softwipe', 'push', 'pushup', 'iris', 'zoom',
+  'slide', 'split', 'clock', 'diagonal', 'heart', 'spin', 'pixelate', 'glitch', 'flash'];
 export const DEFAULT_TRANSITION = 0.8;
 export const MIN_TRANSITION = 0.1;
 export const MAX_TRANSITION = 5;
@@ -213,6 +234,7 @@ export function makeClip(type, fields = {}) {
   if (transform) Object.assign(clip.transform, transform);
   if (filters) Object.assign(clip.filters, filters);
   if (text) Object.assign(clip.text, text);
+  if (clip.text) clip.text.anim = cleanTextAnim(clip.text.anim);
   return clip;
 }
 
@@ -606,6 +628,7 @@ export function updateClip(project, id, patch) {
     if (text && c.text) Object.assign(c.text, text);
     if (c.text && c.text.deco !== '' && !TEXT_DECO_IDS.includes(c.text.deco)) c.text.deco = '';
     if (c.text) c.text.counter = cleanCounter(c.text.counter, (counterTarget(c.text.content) ?? 0) + 20);
+    if (c.text) c.text.anim = cleanTextAnim(c.text.anim);
 
     c.opacity = clamp(Number(c.opacity) || 0, 0, 1);
     c.volume = clamp(Number(c.volume) || 0, 0, 2);
@@ -622,7 +645,8 @@ export function updateClip(project, id, patch) {
       // 變速：保留同一段素材，片段長度跟著變。
       // 後面緊接著其他片段時（中間沒有空隙），後面的片段一起往前 / 往後移，不會留下空白或被截短；
       // 中間有空隙時，放慢撞到後面的片段才截短。
-      const s = clamp(Number(speed) || 1, MIN_SPEED, MAX_SPEED);
+      // 太短的片段加速到不到一格時，改用還能留下一格的最快速度（不會按了沒反應）
+      const s = clamp(Math.min(clamp(Number(speed) || 1, MIN_SPEED, MAX_SPEED), sourceSpan(c) * p.fps), MIN_SPEED, MAX_SPEED);
       const after = clipsOnTrack(p, c.trackId, [c.id]).filter(n => n.start >= c.start);
       const nextStart = after.reduce((m, n) => Math.min(m, n.start), Infinity);
       const packed = Math.abs(nextStart - clipEnd(c)) < 1e-3;
@@ -762,6 +786,7 @@ function sanitizeClip(c) {
     m.text.italic = src.italic === true;
     m.text.deco = TEXT_DECO_IDS.includes(src.deco) ? src.deco : '';
     m.text.counter = cleanCounter(src.counter, (counterTarget(m.text.content) ?? 0) + 20);
+    m.text.anim = cleanTextAnim(src.anim);
     m.text.shadow = src.shadow === undefined ? d.shadow : src.shadow === true;
   }
   return m;

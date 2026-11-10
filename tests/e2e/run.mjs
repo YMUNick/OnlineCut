@@ -1625,7 +1625,7 @@ try {
   await test('文字樣式：霓虹字會發光、可以關掉；圖案分頁可以直接跳到分類', async () => {
     await newProjectUI();
     await page.click('.tab[data-tab="text"]');
-    assert.equal(await page.locator('.text-preset').count(), 16);
+    assert.equal(await page.locator('.text-preset').count(), 22);
     await page.click('[data-preset="neon"]');
     await waitFor(async () => (await state()).project.clips.length === 1, 3000, '加入');
     const t = (await state()).project.clips[0].text;
@@ -1736,7 +1736,7 @@ try {
     const { red, blue } = await setupPacked();
     await page.evaluate((id) => window.__oc.store.select([id]), blue.id);
     await page.click('.tab[data-tab="transitions"]');
-    assert.equal(await page.locator('.tr-opt').count(), 10);
+    assert.equal(await page.locator('.tr-opt').count(), 19);
     await page.click('[data-transition="fade"]');
     assert.deepEqual((await clipOf2(blue.id)).transitionIn, { type: 'fade', duration: 0.8 });
     assert.equal((await clipOf2(red.id)).transitionIn, null);
@@ -1778,6 +1778,23 @@ try {
     assert.equal((await clipOf2(blue.id)).transitionIn, null, '選「無」移除');
   });
 
+  await test('新轉場：對開門中間先露出新畫面、時鐘從 12 點順時針掃過（檢查匯出畫面）', async () => {
+    const { blue } = await setupPacked();
+    const set = (type) => page.evaluate(async ({ id, type }) => {
+      const P = await import('./assets/js/core/project.js');
+      window.__oc.store.commit(P.updateClip(window.__oc.store.project, id, { transitionIn: { type, duration: 1 } }));
+    }, { id: blue.id, type });
+    await set('split');
+    let at = await exportedColors('split', 2.0);
+    assert.equal(at(0.5, 0.5), 'blue', '中間是新畫面');
+    assert.equal(at(0.1, 0.5), 'red', '左右是推開的舊畫面');
+    assert.equal(at(0.9, 0.5), 'red');
+    await set('clock');
+    at = await exportedColors('clock', 2.0);
+    assert.equal(at(0.8, 0.5), 'blue', '右半邊已經掃過');
+    assert.equal(at(0.2, 0.5), 'red', '左半邊還沒');
+  });
+
   await test('套用到全部接點、移除轉場；沒有接點時提示', async () => {
     const { red, blue, photo } = await setupPacked();
     await page.click('.tab[data-tab="transitions"]');
@@ -1808,7 +1825,7 @@ try {
   await test('每一種轉場都能預覽與匯出（推移、縮放、模糊…不會出錯）', async () => {
     const { blue } = await setupPacked();
     const errBefore = errors.length;
-    for (const type of ['black', 'white', 'blur', 'softwipe', 'push', 'pushup', 'zoom']) {
+    for (const type of ['black', 'white', 'blur', 'softwipe', 'push', 'pushup', 'zoom', 'slide', 'split', 'clock', 'diagonal', 'heart', 'spin', 'pixelate', 'glitch', 'flash']) {
       await page.evaluate(async ({ id, type }) => {
         const P = await import('./assets/js/core/project.js');
         const { store, player } = window.__oc;
@@ -1832,6 +1849,14 @@ try {
     }, blue.id);
     const w = (await exportedColors('white', 2.0)).rgb(0.5, 0.5);
     assert.ok(w.every(v => v > 225), `白色：${w}`);
+    // 預覽被收起來（畫布 0 大小）時，轉場中也不會出錯
+    const zeroErr = await page.evaluate(async () => {
+      const { drawFrame } = await import('./assets/js/engine/renderer.js');
+      const c = document.createElement('canvas'); c.width = 0; c.height = 0;
+      const p = window.__oc.store.project;
+      try { drawFrame(c.getContext('2d'), p, 2.0, { getSource: () => null, getMediaInfo: (x) => p.media[x.mediaId] }); return null; } catch (e) { return e.message; }
+    });
+    assert.equal(zeroErr, null);
     assert.deepEqual(errors.slice(errBefore), [], '沒有 JS 錯誤');
   });
 
@@ -2151,6 +2176,163 @@ try {
     const back = (await state()).project;
     assert.equal(back.aspect, '16:9', '一次就能復原');
     assert.equal(back.clips.length, 1);
+  });
+
+  console.log('\n文字動畫');
+  await test('文字動畫：加入「彈出標題」→ 開頭還看不到、之後出現；屬性面板可以換進場 / 出場 / 持續動態', async () => {
+    await setupPacked();
+    await page.evaluate(() => window.__oc.player.seek(0));
+    await page.click('.tab[data-tab="text"]');
+    assert.ok(await page.locator('.text-preset.animated').count() >= 7, '會動的樣式有標記');
+    await page.click('[data-preset="pop"]');
+    const text = async () => (await state()).project.clips.find(c => c.type === 'text');
+    assert.deepEqual((await text()).text.anim, { in: 'pop', out: 'pop', loop: '', duration: 0.5 });
+    const sec = page.locator('.insp-section').filter({ has: page.locator('select[aria-label="進場動畫"]') });
+    assert.equal(await sec.locator('select[aria-label="進場動畫"]').inputValue(), 'pop');
+    // 匯出：第 0 秒文字還縮成 0（看到底下的紅色）、第 1.5 秒是黃色的字
+    assert.equal((await exportedColors('anim0', 0))(0.5, 0.5), 'red');
+    const at = await exportedColors('anim1', 1.5);
+    const yellow = Array.from({ length: 41 }, (_, i) => at.rgb(0.3 + i * 0.01, 0.5)).filter(([r, g, b]) => r > 180 && g > 140 && b < 120).length;
+    assert.ok(yellow >= 3, `看得到黃色的字（${yellow} 個點）`);
+    // 換成打字機進場 + 搖晃
+    await sec.locator('select[aria-label="進場動畫"]').selectOption('typewriter');
+    await sec.locator('select[aria-label="持續動態"]').selectOption('shake');
+    await sec.locator('select[aria-label="出場動畫"]').selectOption('');
+    assert.deepEqual((await text()).text.anim, { in: 'typewriter', out: '', loop: 'shake', duration: 0.5 });
+    // 全部選「無」就沒有動畫
+    await sec.locator('select[aria-label="進場動畫"]').selectOption('');
+    await sec.locator('select[aria-label="持續動態"]').selectOption('');
+    assert.equal((await text()).text.anim, null);
+    assert.equal(await sec.locator('input[type=range]').isDisabled(), true, '沒有進場出場時長度不能調');
+  });
+
+  await test('文字動畫：字幕軌整軌同步時，動畫也一起套用', async () => {
+    await setupFadeClip();
+    await mockSpeech('api.openai.com', () => ({ json: { text: '', segments: [{ start: 0.2, end: 1.2, text: '一' }, { start: 1.4, end: 2.4, text: '二' }] } }));
+    await openAi();
+    await page.selectOption('#aiProvider', 'openai');
+    await page.fill('#aiKey', 'sk-test');
+    await page.click('[data-go]');
+    await page.waitForSelector('.export-done', { timeout: 15000 });
+    await page.click('[data-done]');
+    const caps = async () => (await state()).project.clips.filter(c => c.type === 'text');
+    await page.evaluate((id) => window.__oc.store.select([id]), (await caps())[0].id);
+    await page.locator('select[aria-label="進場動畫"]').selectOption('slideUp');
+    assert.deepEqual((await caps()).map(c => c.text.anim?.in), ['slideUp', 'slideUp']);
+  });
+
+  console.log('\n邊界情況：AI、縮時、轉場');
+  await test('AI 字幕邊界：伺服器錯誤、連不上、回傳不是 JSON、壞掉的段落都有看得懂的訊息，不會壞掉', async () => {
+    await setupFadeClip();
+    const errBefore = errors.length;
+    const run = async () => {
+      await openAi();
+      await page.selectOption('#aiProvider', 'openai');
+      await page.fill('#aiKey', 'sk-test');
+      await page.click('[data-go]');
+      await page.waitForFunction(() => !document.getElementById('aiError')?.hidden || document.querySelector('.export-done'), null, { timeout: 15000 });
+      const msg = (await page.locator('#aiError').count()) ? await page.textContent('#aiError') : '';
+      const done = await page.locator('.export-done').count();
+      if (done) await page.click('[data-done]'); else await page.keyboard.press('Escape');
+      return { msg, done };
+    };
+    await page.unroute('https://api.openai.com/**').catch(() => {});
+    // 500
+    await mockSpeech('api.openai.com', () => ({ status: 500, json: { error: { message: 'boom' } } }));
+    assert.match((await run()).msg, /語音辨識失敗（500）.*boom/);
+    // 回傳不是 JSON
+    await page.unroute('https://api.openai.com/**');
+    await page.route('https://api.openai.com/**', r => r.request().method() === 'OPTIONS' ? r.fulfill({ status: 204, headers: CORS }) : r.fulfill({ status: 200, headers: CORS, contentType: 'text/html', body: '<html>proxy</html>' }));
+    assert.match((await run()).msg, /服務回傳的不是預期的資料/);
+    // 連不上
+    await page.unroute('https://api.openai.com/**');
+    await page.route('https://api.openai.com/**', r => r.abort('connectionrefused'));
+    assert.match((await run()).msg, /連不上語音辨識服務/);
+    // 壞掉的段落：只留下合法的
+    await mockSpeech('api.openai.com', () => ({ json: { text: '', segments: [null, { start: 'x', end: 1, text: 'a' }, { start: 0, end: 1, text: 42 }, { start: 3, end: 2, text: 'b' }, { start: 0.5, end: 1.5, text: '只有這句是對的' }] } }));
+    const r = await run();
+    assert.equal(r.done, 1, r.msg);
+    assert.deepEqual((await state()).project.clips.filter(c => c.type === 'text').map(c => c.text.content), ['只有這句是對的']);
+    // 全部都是壞的：告訴使用者沒有辨識出文字
+    await page.keyboard.press('Control+z');
+    await mockSpeech('api.openai.com', () => ({ json: { text: '', segments: [{ start: 0, end: 1, text: '' }] } }));
+    assert.match((await run()).msg, /沒有辨識出任何文字/);
+    assert.deepEqual(errors.slice(errBefore).filter(e => !/Failed to load resource/.test(e)), [], '沒有 JS 錯誤（模擬的連線失敗除外）');
+  });
+
+  await test('邊界：AI 對話框裡打字不會觸發快捷鍵（Delete、S、空白鍵）', async () => {
+    const id = await setupFadeClip();
+    await openAi();
+    await page.fill('#aiKey', '');
+    await page.focus('#aiKey');
+    await page.keyboard.type('sk s ');
+    await page.keyboard.press('Backspace');
+    await page.keyboard.press('Delete');
+    assert.equal(await page.inputValue('#aiKey'), 'sk s');
+    const p = (await state()).project;
+    assert.equal(p.clips.length, 1, '沒有被刪除或分割');
+    assert.equal(p.clips[0].id, id);
+    assert.equal(await page.evaluate(() => window.__oc.player.playing), false, '沒有開始播放');
+    await page.keyboard.press('Escape');
+  });
+
+  await test('AI 剪成短影音邊界：模型回覆看不懂、編號不存在、權限錯誤時不會改動時間軸', async () => {
+    await newProjectUI();
+    await page.setInputFiles('#fileInput', [fx.talk]);
+    await waitFor(async () => (await state()).project.clips.length === 1, 10000, '匯入');
+    const before = JSON.stringify((await state()).project.clips);
+    const run = async (chat) => {
+      await mockSpeech('api.openai.com', (n, call) => call.url.endsWith('/audio/transcriptions')
+        ? { json: { text: '', segments: [{ start: 1, end: 5, text: '第一句。' }, { start: 24, end: 30, text: '精華！' }] } }
+        : chat);
+      await page.click('.tab[data-tab="text"]');
+      await page.click('#btnAiShort');
+      await page.selectOption('#aiProvider', 'openai');
+      await page.fill('#aiKey', 'sk-test');
+      await page.click('[data-go]');
+      await page.waitForFunction(() => !document.getElementById('aiError').hidden, null, { timeout: 15000 });
+      const msg = await page.textContent('#aiError');
+      await page.keyboard.press('Escape');
+      return msg;
+    };
+    assert.match(await run({ json: { choices: [{ message: { content: '我覺得都很好看' } }] } }), /AI 的回覆看不懂/);
+    assert.match(await run({ json: { choices: [{ message: { content: '{"segments":[7,8,9]}' } }] } }), /AI 的回覆看不懂/);
+    assert.match(await run({ json: {} }), /AI 的回覆看不懂/);
+    assert.match(await run({ status: 401, json: { error: { message: 'bad key' } } }), /API Key 不正確/);
+    assert.equal(JSON.stringify((await state()).project.clips), before, '時間軸沒有被改動');
+  });
+
+  await test('邊界：速度欄位輸入奇怪的值：文字、負數、超大數字都夾在 0.25×–100×', async () => {
+    const id = await setupFadeClip();
+    const num = page.locator('.speed-chips').locator('xpath=../following-sibling::div[1]').locator('.num');
+    const speed = async () => (await state()).project.clips.find(c => c.id === id).speed;
+    for (const [input, want] of [['abc', 1], ['-5', 0.25], ['1e9', 100], ['3', 3]]) {
+      await num.fill(input);
+      await num.press('Enter');
+      assert.equal(await speed(), want, `輸入 ${input}`);
+    }
+    // 雙擊滑桿回到 1×
+    await page.locator('.speed-chips').locator('xpath=../following-sibling::div[1]').locator('input[type=range]').dblclick();
+    assert.equal(await speed(), 1);
+  });
+
+  await test('邊界：鎖定的軌道不能加轉場；空專案按轉場只會提示', async () => {
+    const { blue } = await setupPacked();
+    const v1 = (await state()).project.clips.find(c => c.id === blue.id).trackId;
+    await page.evaluate(async (tid) => {
+      const P = await import('./assets/js/core/project.js');
+      const { store } = window.__oc;
+      store.commit(P.updateTrack(store.project, tid, { locked: true }));
+      store.select([]);
+    }, v1);
+    await page.click('.tab[data-tab="transitions"]');
+    await page.click('[data-transition="fade"]');
+    await page.waitForSelector('.toast:has-text("轉場需要接點")', { timeout: 3000 });
+    assert.ok((await state()).project.clips.every(c => c.transitionIn == null));
+    await newProjectUI();
+    await page.click('.tab[data-tab="transitions"]');
+    await page.click('[data-transition="iris"]');
+    await page.waitForSelector('.toast:has-text("轉場需要接點")', { timeout: 3000 });
   });
 
   console.log('\n英文版');

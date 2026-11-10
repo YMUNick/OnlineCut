@@ -1,6 +1,6 @@
 // 右側屬性面板：專案設定 / 片段屬性
 
-import { updateClip, getClip, renameProject, setAspect, ASPECT_PRESETS, getDuration, clipEnd, canFrame, MIN_FRAME, MIN_SPEED, MAX_SPEED, audioFadesOf, TEXT_DECO_IDS, counterTarget } from '../core/project.js';
+import { updateClip, getClip, renameProject, setAspect, ASPECT_PRESETS, getDuration, clipEnd, canFrame, MIN_FRAME, MIN_SPEED, MAX_SPEED, TEXT_ANIMS, TEXT_LOOPS, DEFAULT_TEXT_ANIM_DURATION, audioFadesOf, TEXT_DECO_IDS, counterTarget } from '../core/project.js';
 import { formatTimecode, formatDuration, clamp } from '../core/time.js';
 import { icon } from './icons.js';
 import { escapeHtml } from './dialogs.js';
@@ -12,6 +12,13 @@ import { TRANSITION_LABELS } from './transitions-panel.js';
 import { textSiblings, isTrackSynced, setTrackSynced, updateTextSynced, copyStyleToTrack } from './text-sync.js';
 
 const TYPE_LABEL = { video: _t('影片片段'), image: _t('圖片片段'), text: _t('文字片段'), audio: _t('音訊片段') };
+export const TEXT_ANIM_LABELS = {
+  fade: _t('淡入淡出'), pop: _t('彈出'), slideUp: _t('上下滑動'), slideLeft: _t('左右滑動'),
+  zoom: _t('縮放'), drop: _t('落下彈跳'), blur: _t('模糊'), typewriter: _t('打字機'),
+};
+export const TEXT_LOOP_LABELS = {
+  pulse: _t('呼吸縮放'), shake: _t('搖晃'), float: _t('漂浮'), swing: _t('擺動'), blink: _t('閃爍'), rainbow: _t('彩虹變色'),
+};
 export const DECO_LABELS = {
   burst: _t('爆炸標'), bubble: _t('對話框'), pill: _t('膠囊按鈕'), ribbon: _t('絲帶'), lower: _t('字幕條'),
   badge: _t('圓章'), note: _t('便利貼'), marker: _t('螢光筆'), tag: _t('價格標籤'),
@@ -32,6 +39,11 @@ const FILTER_PRESETS = [
   [_t('黑白'), { brightness: 100, contrast: 118, saturation: 100, grayscale: 100, blur: 0 }],
   [_t('夢幻'), { brightness: 112, contrast: 92, saturation: 120, grayscale: 0, blur: 1.5 }],
 ];
+
+const LS_COLLAPSED = 'onlinecut.inspCollapsed';
+function collapsedSections() {
+  try { const v = JSON.parse(localStorage.getItem(LS_COLLAPSED) || '[]'); return new Set(Array.isArray(v) ? v : []); } catch { return new Set(); }
+}
 
 export function parseColor(str) {
   if (!str) return { hex: '#000000', alpha: 0 };
@@ -120,7 +132,7 @@ export class Inspector {
     acts.addEventListener('click', (e) => { const a = e.target.closest('[data-a]')?.dataset.a; if (a) this.actions[a](); });
     timing.appendChild(acts);
 
-    if (clip.type === 'text') this.buildText();
+    if (clip.type === 'text') { this.buildText(); this.buildTextAnim(); }
     if (clip.frame) this.buildFrame();
     else if (clip.type !== 'audio') this.buildTransform();
     this.buildAppearance(clip);
@@ -238,12 +250,12 @@ export class Inspector {
       sync.hidden = n === 0;
       if (!n) return;
       syncBox.checked = isTrackSynced(p, c);
+      sync.classList.toggle('on', syncBox.checked);
       sync.querySelector('span').textContent = _t('同時修改這條軌上的全部文字（共 {n} 段）', { n: n + 1 });
       sync.querySelector('.hint-line').textContent = syncBox.checked
         ? _t('字型、大小、顏色、背景、外框與位置會一起改；每段的文字內容和時間不變。')
         : _t('只改這一段。勾選上面的選項，或按「把這段的樣式套用到整軌」讓其他段變成一樣。');
     });
-    s.appendChild(sync);
     const ta = document.createElement('textarea');
     ta.className = 'textarea';
     ta.setAttribute('aria-label', _t('文字內容'));
@@ -251,6 +263,7 @@ export class Inspector {
     ta.addEventListener('input', () => this.commit(() => ({ text: { content: ta.value } }), 'content'));
     this.bind(ta, (c) => { ta.value = c.text.content; });
     s.appendChild(ta);
+    s.appendChild(sync);
 
     const font = document.createElement('select');
     font.className = 'select';
@@ -516,6 +529,30 @@ export class Inspector {
   }
 
   /** 跟前一段之間的轉場（記在後面那段） */
+  /** 文字動畫：進場、出場、持續動態 */
+  buildTextAnim() {
+    const s = this.section(_t('文字動畫'));
+    const anim = (c) => c.text.anim ?? { in: '', out: '', loop: '', duration: DEFAULT_TEXT_ANIM_DURATION };
+    const select = (label, key, ids, labels, aria) => {
+      const sel = document.createElement('select');
+      sel.className = 'select';
+      sel.setAttribute('aria-label', aria);
+      sel.innerHTML = `<option value="">${_t('無')}</option>` + ids.map(id => `<option value="${id}">${labels[id]}</option>`).join('');
+      sel.onchange = () => this.commit(c => ({ text: { anim: { ...anim(c), [key]: sel.value } } }), `anim-${key}`);
+      this.bind(sel, c => { sel.value = c.text.anim?.[key] ?? ''; });
+      s.appendChild(this.row(label, sel));
+    };
+    select(_t('進場'), 'in', TEXT_ANIMS, TEXT_ANIM_LABELS, _t('進場動畫'));
+    select(_t('出場'), 'out', TEXT_ANIMS, TEXT_ANIM_LABELS, _t('出場動畫'));
+    select(_t('持續'), 'loop', TEXT_LOOPS, TEXT_LOOP_LABELS, _t('持續動態'));
+    s.appendChild(this.slider(_t('長度'), {
+      min: 0.1, max: 3, step: 0.1, unit: 's', decimals: 1, reset: DEFAULT_TEXT_ANIM_DURATION, hardMax: 5,
+      get: c => anim(c).duration, set: (v, c) => ({ text: { anim: { ...anim(c), duration: v } } }), key: 'animDur',
+      disabled: c => !c.text.anim?.in && !c.text.anim?.out,
+    }));
+    s.insertAdjacentHTML('beforeend', `<p class="hint-line">${_t('進場、出場的長度是動畫本身的秒數；出場是進場倒著播。按空白鍵播放看看效果。')}</p>`);
+  }
+
   buildTransition() {
     const s = this.section(_t('轉場'));
     const sel = document.createElement('select');
@@ -605,10 +642,22 @@ export class Inspector {
   }
 
   // ---------- 小元件 ----------
+  /** 區塊：點標題可以收合，收合狀態會記住（屬性很多時比較好找） */
   section(title, extra = '') {
     const s = document.createElement('section');
     s.className = 'insp-section';
-    s.innerHTML = `<h3><span>${title}</span>${extra}</h3>`;
+    const collapsed = collapsedSections().has(title);
+    s.classList.toggle('collapsed', collapsed);
+    s.innerHTML = `<h3><button class="sec-toggle" type="button" aria-expanded="${!collapsed}">${icon('chevronDown', 'icon-sm')}<span>${title}</span></button>${extra}</h3>`;
+    const toggle = s.querySelector('.sec-toggle');
+    toggle.onclick = () => {
+      const now = !s.classList.contains('collapsed');
+      s.classList.toggle('collapsed', now);
+      toggle.setAttribute('aria-expanded', String(!now));
+      const set = collapsedSections();
+      if (now) set.add(title); else set.delete(title);
+      try { localStorage.setItem(LS_COLLAPSED, JSON.stringify([...set])); } catch { /* 無痕模式 */ }
+    };
     this.els.inspector.appendChild(s);
     return s;
   }

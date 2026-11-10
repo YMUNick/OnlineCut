@@ -4,6 +4,7 @@
 import { clipOpacityAt, counterText } from '../core/project.js';
 import { visualClipsAt, effectiveTransition, transitionProgress, visualTime, canTransition } from '../core/transitions.js';
 import { TEXT_DECOS } from './text-deco.js';
+import { textAnimState, visibleCount } from '../core/text-anim.js';
 
 export const TEXT_LINE_HEIGHT = 1.25;
 export const TEXT_PAD = 0.3; // 背景框內距（字級的倍數）
@@ -181,14 +182,29 @@ function drawClip(ctx, env, clip) {
   if (alpha <= 0) return;
 
   ctx.save();
-  ctx.globalAlpha = alpha;
-  const filter = filterString(clip.filters, k);
+  // 文字動畫：位移、縮放、旋轉、透明度、模糊、變色（編輯中的文字不動，方便對齊輸入框）
+  const anim = clip.type === 'text' && clip.text.anim && clip.id !== hideTextFor ? textAnimState(clip.text.anim, t - clip.start, clip.duration) : null;
+  ctx.globalAlpha = alpha * (anim ? anim.alpha : 1);
+  if (ctx.globalAlpha <= 0) { ctx.restore(); return; }
+  let filter = filterString(clip.filters, k);
+  if (anim && (anim.blur > 0.005 || anim.hue)) {
+    const unit = clip.text.fontSize * clip.transform.scale * k;
+    const extra = `${anim.blur > 0.005 ? `blur(${(anim.blur * unit).toFixed(2)}px)` : ''} ${anim.hue ? `hue-rotate(${anim.hue.toFixed(1)}deg)` : ''}`.trim();
+    filter = filter === 'none' ? extra : `${filter} ${extra}`;
+  }
   if (filter !== 'none') ctx.filter = filter;
-  ctx.translate(layout.cx, layout.cy);
-  if (layout.rotation) ctx.rotate((layout.rotation * Math.PI) / 180);
+  if (anim) {
+    const unit = clip.text.fontSize * clip.transform.scale;
+    ctx.translate(layout.cx + anim.dx * unit, layout.cy + anim.dy * unit);
+    if (layout.rotation || anim.rot) ctx.rotate(((layout.rotation + anim.rot) * Math.PI) / 180);
+    if (anim.scale !== 1) ctx.scale(Math.max(1e-3, anim.scale), Math.max(1e-3, anim.scale));
+  } else {
+    ctx.translate(layout.cx, layout.cy);
+    if (layout.rotation) ctx.rotate((layout.rotation * Math.PI) / 180);
+  }
 
   if (clip.type === 'text') {
-    drawText(ctx, clip.text.counter ? { ...clip, text: shownText(clip, t) } : clip, layout, measure, clip.id === hideTextFor);
+    drawText(ctx, clip.text.counter ? { ...clip, text: shownText(clip, t) } : clip, layout, measure, clip.id === hideTextFor, anim ? anim.chars : 1);
   } else if (layout.framed) {
     ctx.filter = 'none';
     drawFramed(ctx, clip, layout, getSource(clip), getMediaInfo(clip), filter, k);
@@ -222,15 +238,54 @@ function layer(i, canvas, k) {
 
 const smooth = p => p * p * (3 - 2 * p);
 
-/** 把一段畫到暫存畫布：dx / dy 位移、s 以畫面中心縮放 */
-function clipLayer(i, ctx, env, clip, { dx = 0, dy = 0, s = 1 } = {}) {
+/** 把一段畫到暫存畫布：dx / dy 位移、s 以畫面中心縮放、r 以畫面中心旋轉（度） */
+function clipLayer(i, ctx, env, clip, { dx = 0, dy = 0, s = 1, r = 0 } = {}) {
   const { project, k } = env;
   const lc = layer(i, ctx.canvas, k);
-  lc.translate(dx + (project.width / 2) * (1 - s), dy + (project.height / 2) * (1 - s));
+  const cx = project.width / 2, cy = project.height / 2;
+  lc.translate(dx + cx, dy + cy);
+  if (r) lc.rotate((r * Math.PI) / 180);
   if (s !== 1) lc.scale(s, s);
+  lc.translate(-cx, -cy);
   drawClip(lc, env, clip);
   return lc.canvas;
 }
+
+/** 馬賽克：縮小再放大（不平滑） */
+function pixelated(i, src, block) {
+  if (block <= 1.01) return src;
+  const small = layer(i, { width: Math.max(1, Math.round(src.width / block)), height: Math.max(1, Math.round(src.height / block)) }, 1);
+  small.drawImage(src, 0, 0, small.canvas.width, small.canvas.height);
+  const big = layer(i + 1, src, 1);
+  big.imageSmoothingEnabled = false;
+  big.drawImage(small.canvas, 0, 0, src.width, src.height);
+  big.imageSmoothingEnabled = true;
+  return big.canvas;
+}
+
+/** 只留下某個顏色通道（multiply 純色後把透明度補回來），用在故障效果的色偏 */
+function channel(i, src, color) {
+  const lc = layer(i, src, 1);
+  lc.drawImage(src, 0, 0);
+  lc.globalCompositeOperation = 'multiply';
+  lc.fillStyle = color;
+  lc.fillRect(0, 0, src.width, src.height);
+  lc.globalCompositeOperation = 'destination-in';
+  lc.drawImage(src, 0, 0);
+  lc.globalCompositeOperation = 'source-over';
+  return lc.canvas;
+}
+
+/** 愛心形狀（中心 cx, cy，寬約 s） */
+function heartPath(c, cx, cy, s) {
+  c.moveTo(cx, cy + s * 0.38);
+  c.bezierCurveTo(cx - s * 0.62, cy - s * 0.02, cx - s * 0.32, cy - s * 0.58, cx, cy - s * 0.22);
+  c.bezierCurveTo(cx + s * 0.32, cy - s * 0.58, cx + s * 0.62, cy - s * 0.02, cx, cy + s * 0.38);
+  c.closePath();
+}
+
+/** 固定的假亂數（故障效果每次匯出都一樣） */
+const hash = (a, b) => { const x = Math.sin(a * 127.1 + b * 311.7) * 43758.5453; return x - Math.floor(x); };
 
 /** 用像素座標把暫存畫布貼上去；clip(ctx) 可以先設定裁切範圍 */
 function put(ctx, src, { alpha = 1, filter = 'none', clip = null } = {}) {
@@ -269,6 +324,8 @@ function drawTransition(ctx, env, a, b, type, p) {
   const { project, k } = env;
   const W = project.width, H = project.height;
   const cw = ctx.canvas.width, ch = ctx.canvas.height;
+  // 畫布是 0 大小（例如預覽被收起來）：暫存畫布也是 0，不能拿來貼，直接照順序畫（反正看不到）
+  if (!cw || !ch) { drawClip(ctx, env, a); drawClip(ctx, env, b); return; }
   const e = smooth(p);
   switch (type) {
     case 'push':
@@ -280,6 +337,15 @@ function drawTransition(ctx, env, a, b, type, p) {
     }
     case 'zoom':
       put(ctx, mix(clipLayer(0, ctx, env, a, { s: 1 + 0.3 * e }), clipLayer(1, ctx, env, b, { s: 1.3 - 0.3 * e }), p));
+      return;
+    case 'slide':
+      // 新畫面從右邊滑進來蓋住舊畫面（舊畫面不動）
+      put(ctx, clipLayer(0, ctx, env, a));
+      put(ctx, clipLayer(1, ctx, env, b, { dx: (1 - e) * W }));
+      return;
+    case 'spin':
+      // 舊畫面旋轉縮小、新畫面轉回來
+      put(ctx, mix(clipLayer(0, ctx, env, a, { s: 1 - 0.6 * e, r: 180 * e }), clipLayer(1, ctx, env, b, { s: 0.4 + 0.6 * e, r: -180 * (1 - e) }), e));
       return;
   }
   const la = clipLayer(0, ctx, env, a);
@@ -332,6 +398,94 @@ function drawTransition(ctx, env, a, b, type, p) {
       put(ctx, la);
       put(ctx, lb, { clip: c => c.arc(cw / 2, ch / 2, e * Math.hypot(cw, ch) / 2, 0, Math.PI * 2) });
       return;
+    case 'split':
+      // 對開門：舊畫面從中間分成兩半往左右推開
+      put(ctx, lb);
+      ctx.save();
+      ctx.setTransform(1, 0, 0, 1, 0, 0);
+      ctx.drawImage(la, 0, 0, cw / 2, ch, -e * cw / 2, 0, cw / 2, ch);
+      ctx.drawImage(la, cw / 2, 0, cw / 2, ch, cw / 2 + e * cw / 2, 0, cw / 2, ch);
+      ctx.restore();
+      return;
+    case 'clock': {
+      // 時鐘：從 12 點方向順時針掃過
+      const R = Math.hypot(cw, ch);
+      put(ctx, la);
+      if (e > 0) put(ctx, lb, { clip: c => { c.moveTo(cw / 2, ch / 2); c.arc(cw / 2, ch / 2, R, -Math.PI / 2, -Math.PI / 2 + e * Math.PI * 2); c.closePath(); } });
+      return;
+    }
+    case 'diagonal': {
+      // 斜角漸層擦除：從左上往右下柔和地蓋過去
+      const L = Math.hypot(cw, ch), F = L * 0.3, ux = cw / L, uy = ch / L;
+      const d = e * (L + F) - F;
+      const c = lb.getContext('2d');
+      c.save();
+      c.setTransform(1, 0, 0, 1, 0, 0);
+      c.globalCompositeOperation = 'destination-in';
+      const g = c.createLinearGradient(ux * d, uy * d, ux * (d + F), uy * (d + F));
+      g.addColorStop(0, 'rgba(0,0,0,1)');
+      g.addColorStop(1, 'rgba(0,0,0,0)');
+      c.fillStyle = g;
+      c.fillRect(0, 0, cw, ch);
+      c.restore();
+      put(ctx, la);
+      put(ctx, lb);
+      return;
+    }
+    case 'heart': {
+      // 愛心形狀從中間長大
+      put(ctx, la);
+      if (p >= 0.98) { put(ctx, lb); return; }
+      const size = Math.pow(e, 1.4) * Math.max(cw, ch) * 3.2;
+      if (size > 1) put(ctx, lb, { clip: c => heartPath(c, cw / 2, ch / 2 + size * 0.05, size) });
+      return;
+    }
+    case 'pixelate': {
+      // 馬賽克：舊畫面越來越粗，到中間換成新畫面再慢慢變清楚
+      const amount = 1 - Math.abs(2 * p - 1);
+      put(ctx, pixelated(2, p < 0.5 ? la : lb, 1 + amount * Math.min(cw, ch) * 0.07));
+      return;
+    }
+    case 'glitch': {
+      // 故障：色偏 + 水平錯位，中間的時候換畫面
+      const amount = Math.max(0, 1 - Math.abs(2 * p - 1) * 1.15);
+      const src = p < 0.5 ? la : lb;
+      if (amount <= 0.02) { put(ctx, src); return; }
+      const off = amount * cw * 0.018;
+      const out = layer(4, ctx.canvas, 1);
+      out.globalCompositeOperation = 'lighter';
+      out.drawImage(channel(2, src, '#ff0000'), off, 0);
+      out.drawImage(channel(3, src, '#00ffff'), -off, 0);
+      out.globalCompositeOperation = 'source-over';
+      const strips = 14, frame = Math.floor(p * 24);
+      ctx.save();
+      ctx.setTransform(1, 0, 0, 1, 0, 0);
+      for (let i = 0; i < strips; i++) {
+        const y = Math.floor((i * ch) / strips), h = Math.ceil(ch / strips) + 1;
+        const dx = (hash(i, frame) - 0.5) * 2 * amount * cw * 0.09 * (hash(frame, i) > 0.45 ? 1 : 0.15);
+        ctx.drawImage(out.canvas, 0, y, cw, h, dx, y, cw, h);
+      }
+      ctx.restore();
+      return;
+    }
+    case 'flash': {
+      // 漏光：溫暖的光從右上角掃過，同時溶接
+      put(ctx, mix(la, lb, e));
+      const amount = Math.sin(p * Math.PI);
+      ctx.save();
+      ctx.setTransform(1, 0, 0, 1, 0, 0);
+      ctx.globalCompositeOperation = 'screen';
+      const gx = cw * (1.1 - 0.5 * p), gy = ch * 0.1;
+      const g = ctx.createRadialGradient(gx, gy, 0, gx, gy, Math.max(cw, ch) * 1.1);
+      g.addColorStop(0, `rgba(255, 236, 200, ${0.95 * amount})`);
+      g.addColorStop(0.35, `rgba(255, 150, 80, ${0.7 * amount})`);
+      g.addColorStop(0.7, `rgba(255, 60, 90, ${0.35 * amount})`);
+      g.addColorStop(1, 'rgba(255, 60, 90, 0)');
+      ctx.fillStyle = g;
+      ctx.fillRect(0, 0, cw, ch);
+      ctx.restore();
+      return;
+    }
     default: // fade
       put(ctx, mix(la, lb, p));
   }
@@ -383,7 +537,7 @@ function isDrawable(src) {
 }
 
 /** hideGlyphs：正在預覽上直接編輯這段文字時，只畫外框造型與背景，字由輸入框顯示 */
-function drawText(ctx, clip, layout, measure, hideGlyphs = false) {
+function drawText(ctx, clip, layout, measure, hideGlyphs = false, visible = 1) {
   const t = clip.text;
   const s = clip.transform.scale;
   ctx.scale(s, s);
@@ -420,17 +574,32 @@ function drawText(ctx, clip, layout, measure, hideGlyphs = false) {
     ctx.shadowBlur = t.fontSize * 0.12 * k;
     ctx.shadowOffsetY = t.fontSize * 0.04 * k;
   }
-  lines.forEach((line, i) => {
+  // 打字機：只畫前面幾個字，位置照完整的一行算（字不會左右跳）
+  let left = visible >= 1 ? Infinity : visibleCount(lines, visible);
+  lines.forEach((full, i) => {
+    if (left <= 0) return;
+    const chars = [...full];
+    let line = full, x = ax;
+    if (chars.length > left) {
+      line = chars.slice(0, left).join('');
+      if (ctx.textAlign !== 'left') {
+        const w = ctx.measureText(full).width;
+        x = ctx.textAlign === 'center' ? ax - w / 2 : ax - w;
+        ctx.textAlign = 'left';
+      }
+    }
+    left -= chars.length;
     const y = top + i * lh;
     if (t.strokeWidth > 0) {
       ctx.lineJoin = 'round';
       ctx.lineWidth = t.strokeWidth * 2;
       ctx.strokeStyle = t.strokeColor || '#000';
-      ctx.strokeText(line, ax, y);
+      ctx.strokeText(line, x, y);
     }
     ctx.fillStyle = t.color || '#fff';
-    ctx.fillText(line, ax, y);
-    if (t.glow) ctx.fillText(line, ax, y);
+    ctx.fillText(line, x, y);
+    if (t.glow) ctx.fillText(line, x, y);
+    ctx.textAlign = t.align || 'center';
   });
 }
 

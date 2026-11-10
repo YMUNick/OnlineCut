@@ -7,6 +7,8 @@ import { _t } from '../i18n.js';
 export const TRANSITION_LABELS = {
   fade: _t('溶解'), black: _t('黑場過渡'), white: _t('白場閃光'), blur: _t('模糊溶接'), wipe: _t('擦除'),
   softwipe: _t('柔和漸層擦除'), push: _t('推移'), pushup: _t('往上推移'), iris: _t('圓形展開'), zoom: _t('放大溶接'),
+  slide: _t('滑入覆蓋'), split: _t('對開門'), clock: _t('時鐘掃過'), diagonal: _t('斜角漸層'), heart: _t('愛心展開'),
+  spin: _t('旋轉縮放'), pixelate: _t('馬賽克'), glitch: _t('故障雜訊'), flash: _t('漏光溶接'),
 };
 
 const DURATIONS = [0.5, 0.8, 1.2, 2];

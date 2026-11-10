@@ -322,6 +322,13 @@ describe('updateClip', () => {
     project = P.updateClip(project, clip.id, { speed: 0 });
     assert.equal(P.getClip(project, clip.id).speed, 1); // 0 視為無效，回到 1
   });
+  test('很短的片段加速：用還能留下一格的最快速度', () => {
+    let { project, clip } = P.addClip(setup(), 'video', { mediaId: 'mv', duration: 1 });
+    project = P.updateClip(project, clip.id, { speed: 50 });
+    const c = P.getClip(project, clip.id);
+    assert.equal(c.speed, 30);
+    near(c.duration, 1 / 30);
+  });
   test('後面緊接著的片段跟著移動：加速往前補位、放慢往後推，可以來回', () => {
     let p = setup(), a, b, c;
     ({ project: p, clip: a } = P.addClip(p, 'video', { mediaId: 'mv' }));

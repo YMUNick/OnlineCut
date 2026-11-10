@@ -83,14 +83,17 @@
         </div>
       </section>
       <section class="tab-panel" data-panel="text" hidden>
-        <button class="ai-card" id="btnAiCaptions" type="button">
-          <span class="ai-card-icon" data-icon="sparkle"></span>
-          <span class="ai-card-text"><b>AI 自動上字幕</b><small>語音辨識自動產生字幕（需要 API Key）</small></span>
-        </button>
-        <button class="ai-card ai-card-sm" id="btnAiShort" type="button">
-          <span class="ai-card-icon" data-icon="bolt"></span>
-          <span class="ai-card-text"><b>AI 剪成短影音</b><small>挑出精華剪成約 30 秒的 Shorts / Reels</small></span>
-        </button>
+        <div class="ai-tools">
+          <button class="ai-card" id="btnAiCaptions" type="button">
+            <span class="ai-card-icon" data-icon="sparkle"></span>
+            <span class="ai-card-text"><b>AI 自動上字幕</b><small>說的話變成字幕</small></span>
+          </button>
+          <button class="ai-card ai-card-short" id="btnAiShort" type="button">
+            <span class="ai-card-icon" data-icon="bolt"></span>
+            <span class="ai-card-text"><b>AI 剪成短影音</b><small>挑精華剪成 Shorts</small></span>
+          </button>
+        </div>
+        <p class="ai-tools-note">需要自己的 OpenAI 或 Groq API Key</p>
         <p class="panel-note">點一下加到播放頭的位置，之後可以在右側調整內容與樣式。</p>
         <div class="text-presets" id="textPresets"></div>
       </section>

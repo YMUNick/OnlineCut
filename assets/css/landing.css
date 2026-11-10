@@ -183,3 +183,8 @@
   .footer a:not(.logo) { margin-left: 0; }
   .wrap, .wrap.narrow { width: calc(100% - 32px); }
 }
+
+/* AI 功能的卡片：右上角標示「新功能」 */
+.feature.is-new { position: relative; }
+.f-new { position: absolute; top: 20px; right: 20px; font-size: 11px; font-weight: 800; letter-spacing: .06em; padding: 4px 8px; border-radius: 999px; background: linear-gradient(135deg, #7b5cff, #ff5c39); color: #fff; }
+.f-icon.c-ai { background: linear-gradient(135deg, rgba(123,92,255,.16), rgba(255,92,57,.16)); color: #6a48ff; }

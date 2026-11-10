@@ -59,7 +59,12 @@ async function postAudio({ base, apiKey, model, language, prompt, wav, format, s
     try { const j = await res.json(); detail = j?.error?.message || j?.message || ''; } catch { /* 不是 JSON */ }
     throw new TranscribeError(detail, res.status);
   }
-  return res.json();
+  return readJSON(res);
+}
+
+/** 回應不是 JSON（例如網址填成網頁）時給看得懂的訊息 */
+async function readJSON(res) {
+  try { return await res.json(); } catch { throw new TranscribeError(_t('服務回傳的不是預期的資料，請檢查 API 網址。')); }
 }
 
 function friendlyError(e) {
@@ -176,7 +181,7 @@ export async function chatJSON({ base, apiKey, model, messages, signal }) {
       try { const j = await res.json(); detail = j?.error?.message || j?.message || ''; } catch { /* 不是 JSON */ }
       throw new TranscribeError(detail, res.status);
     }
-    const j = await res.json();
+    const j = await readJSON(res);
     return j?.choices?.[0]?.message?.content ?? '';
   };
   try {

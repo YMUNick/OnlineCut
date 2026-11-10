@@ -73,7 +73,7 @@ export function wrapLines(text, max) {
  */
 export function buildCaptions(segments, { lineUnits = 16, maxLines = 2, minDuration = 0.6 } = {}) {
   const out = [];
-  const sorted = [...segments].filter(s => s && typeof s.text === 'string' && s.text.trim() && s.end > s.start).sort((a, b) => a.start - b.start);
+  const sorted = [...segments].filter(s => s && typeof s.text === 'string' && s.text.trim() && Number.isFinite(s.start) && Number.isFinite(s.end) && s.end > s.start).sort((a, b) => a.start - b.start);
   for (const seg of sorted) {
     const pieces = splitText(seg.text.replace(/\s+/g, ' '), lineUnits * maxLines);
     const total = pieces.reduce((n, p) => n + textUnits(p), 0) || 1;
@@ -100,7 +100,9 @@ export function buildCaptions(segments, { lineUnits = 16, maxLines = 2, minDurat
  */
 export function cleanSegments(segments) {
   return segments.filter(s => {
-    if (!s?.text?.trim()) return false;
+    // 服務回傳的資料不一定可靠：文字不是字串、時間不是數字的段落都丟掉
+    if (typeof s?.text !== 'string' || !s.text.trim()) return false;
+    if (!Number.isFinite(s.start) || !Number.isFinite(s.end) || s.end <= s.start) return false;
     if (s.no_speech_prob > 0.6 && s.avg_logprob < -1) return false;
     if (s.compression_ratio > 2.6) return false;
     return true;

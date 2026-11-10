@@ -26,7 +26,14 @@ export const TEXT_PRESETS = [
   { id: 'script', label: _t('草寫標題'), sample: 'Summer Vibes', text: { fontSize: 110, fontWeight: 400, fontFamily: 'Pacifico', color: '#ffffff', shadow: true } },
   { id: 'marker', label: _t('麥克筆字'), sample: 'Wait for it…', text: { fontSize: 96, fontWeight: 400, fontFamily: 'Permanent Marker', color: '#ffd23f', shadow: true } },
   { id: 'counter', label: _t('數字倒數'), sample: '2132', text: { fontSize: 220, fontWeight: 900, fontFamily: 'Bebas Neue', color: '#ffffff', shadow: true, counter: { from: 2152, duration: 3, ease: 'out' } } },
-  { id: 'typewriter', label: _t('打字機'), sample: 'Hello, world.', text: { fontSize: 56, fontWeight: 400, fontFamily: 'ui-monospace', color: '#d9ffe0', background: 'rgba(0,0,0,0.75)', shadow: false } },
+  { id: 'typewriter', label: _t('打字機'), sample: 'Hello, world.', text: { fontSize: 56, fontWeight: 400, fontFamily: 'ui-monospace', color: '#d9ffe0', background: 'rgba(0,0,0,0.75)', shadow: false, anim: { in: 'typewriter', duration: 1.5 } } },
+  // 會動的文字（anim：進場 / 出場 / 持續動態）
+  { id: 'pop', label: _t('彈出標題'), sample: _t('太神啦！'), text: { fontSize: 150, fontWeight: 900, color: '#ffd23f', strokeColor: '#1b1440', strokeWidth: 10, shadow: false, anim: { in: 'pop', out: 'pop', duration: 0.5 } } },
+  { id: 'impact', label: _t('震撼登場'), sample: _t('注意！'), text: { fontSize: 150, fontWeight: 900, color: '#ffffff', background: '#e53935', shadow: false, anim: { in: 'drop', loop: 'shake', duration: 0.9 } } },
+  { id: 'slidebar', label: _t('滑入字幕條'), sample: _t('主持人｜王小明'), text: { fontSize: 58, fontWeight: 700, color: '#ffffff', deco: 'lower', shadow: false, anim: { in: 'slideLeft', out: 'slideLeft', duration: 0.6 } }, transform: { y: 330 } },
+  { id: 'blink', label: _t('霓虹閃爍'), sample: 'OPEN', text: { fontSize: 180, fontWeight: 400, fontFamily: 'Bebas Neue', color: '#eaffff', glow: '#3df5ff', shadow: false, anim: { in: 'fade', loop: 'blink', duration: 0.4 } } },
+  { id: 'rainbow', label: _t('彩虹派對'), sample: _t('派對開始！'), text: { fontSize: 130, fontWeight: 400, fontFamily: 'Huninn', color: '#ff5c7a', strokeColor: '#ffffff', strokeWidth: 7, shadow: false, anim: { in: 'zoom', loop: 'rainbow', duration: 0.6 } } },
+  { id: 'float', label: _t('漂浮標語'), sample: _t('限時 7 折'), text: { fontSize: 84, fontWeight: 900, color: '#ffffff', background: '#ff5c39', shadow: false, anim: { in: 'blur', out: 'fade', loop: 'float', duration: 0.7 } } },
 ];
 
 export function formatBytes(n) {
@@ -73,7 +80,10 @@ export class MediaPanel {
         t.strokeWidth ? `-webkit-text-stroke:${Math.max(1, t.strokeWidth / 4)}px ${t.strokeColor};paint-order:stroke fill` : '',
         t.glow ? `text-shadow:0 0 6px ${t.glow},0 0 14px ${t.glow}` : t.shadow ? 'text-shadow:0 2px 6px rgba(0,0,0,.6)' : '',
       ].filter(Boolean).join(';');
-      return `<button class="text-preset" data-preset="${p.id}" title="${_t('加入「{name}」', { name: p.label })}"><span><span style="${style}">${escapeHtml(p.sample)}</span><small>${p.label}</small></span></button>`;
+      // 會動的樣式：縮圖滑過時播一下動畫，並標上「動畫」
+      const anim = t.anim ? (t.anim.loop && t.anim.in !== 'typewriter' ? t.anim.loop : t.anim.in) : '';
+      const badge = t.anim ? `<i class="tp-badge">${_t('動畫')}</i>` : '';
+      return `<button class="text-preset${anim ? ' animated' : ''}" data-preset="${p.id}" title="${_t('加入「{name}」', { name: p.label })}"><span><span style="${style}"${anim ? ` data-anim="${anim}"` : ''}>${escapeHtml(p.sample)}</span><small>${p.label}${badge}</small></span></button>`;
     }).join('');
     els.textPresets.addEventListener('click', (e) => {
       const id = e.target.closest('[data-preset]')?.dataset.preset;
